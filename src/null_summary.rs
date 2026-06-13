@@ -14,7 +14,5 @@ pub struct NullSummary<V> {
 }
 
 impl<V> Summary<V> for NullSummary<V> {
-    fn batch_update(&mut self, _entries: &[Entry<V>]) {}
-
     fn update(&mut self, _entry: &Entry<V>) {}
 }

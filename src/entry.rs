@@ -7,7 +7,7 @@
 /// A paired timestamp and value. These are used when
 /// storing data within a [`Chronology`](crate::Chronology)
 /// and returned when querying.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Entry<V> {
     /// Timestamp for which the value is valid.
     pub timestamp: u64,

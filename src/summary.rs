@@ -14,7 +14,11 @@ pub trait Summary<V> {
     /// Some summary implementations may be able to operate
     /// more efficiently in batch form rather than updating
     /// over and over for each individual [`Entry`].
-    fn batch_update(&mut self, entry: &[Entry<V>]);
+    fn batch_update(&mut self, entries: &[Entry<V>]) {
+        for entry in entries {
+            self.update(entry);
+        }
+    }
 
     /// Update the summary with a single new [`Entry`].
     fn update(&mut self, entry: &Entry<V>);

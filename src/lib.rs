@@ -51,7 +51,7 @@ mod null_summary;
 mod simple_summary;
 mod summary;
 
-pub use self::chronology::Chronology;
+pub use self::chronology::{Chronology, InsertError, DEFAULT_CHUNK_CAPACITY};
 pub use self::entry::Entry;
 pub use self::null_summary::NullSummary;
 pub use self::simple_summary::SimpleSummary;
@@ -81,7 +81,8 @@ mod tests {
             Entry::new(10, 3.0),
             Entry::new(15, 4.0),
             Entry::new(20, 5.0),
-        ]);
+        ])
+        .expect("timestamps are monotonic");
         assert_eq!(
             v.find_nearest_value(2, Direction::Forward),
             Some(Entry::new(5, 2.0))
@@ -91,5 +92,97 @@ mod tests {
             Some(Entry::new(15, 4.0))
         );
         assert_eq!(v.find_nearest_value(22, Direction::Forward), None);
+    }
+
+    #[test]
+    fn searches_backward() {
+        let mut chronology = Chronology::<f32, NullSummary<f32>>::new();
+        chronology
+            .insert_values(&[
+                Entry::new(5, 2.0),
+                Entry::new(10, 3.0),
+                Entry::new(15, 4.0),
+                Entry::new(20, 5.0),
+            ])
+            .expect("timestamps are monotonic");
+
+        assert_eq!(chronology.find_nearest_value(2, Direction::Backward), None);
+        assert_eq!(
+            chronology.find_nearest_value(12, Direction::Backward),
+            Some(Entry::new(10, 3.0))
+        );
+        assert_eq!(
+            chronology.find_nearest_value(20, Direction::Backward),
+            Some(Entry::new(20, 5.0))
+        );
+        assert_eq!(
+            chronology.find_nearest_value(22, Direction::Backward),
+            Some(Entry::new(20, 5.0))
+        );
+    }
+
+    #[test]
+    fn searches_across_chunks() {
+        let mut chronology = Chronology::<f32, NullSummary<f32>>::with_chunk_capacity(2);
+        chronology
+            .insert_values(&[
+                Entry::new(5, 2.0),
+                Entry::new(10, 3.0),
+                Entry::new(15, 4.0),
+                Entry::new(20, 5.0),
+                Entry::new(25, 6.0),
+            ])
+            .expect("timestamps are monotonic");
+
+        assert_eq!(chronology.len(), 5);
+        assert_eq!(chronology.sealed_chunk_count(), 2);
+        assert_eq!(
+            chronology.find_nearest_value(11, Direction::Forward),
+            Some(Entry::new(15, 4.0))
+        );
+        assert_eq!(
+            chronology.find_nearest_value(21, Direction::Backward),
+            Some(Entry::new(20, 5.0))
+        );
+    }
+
+    #[test]
+    fn rejects_non_monotonic_batches_without_mutating() {
+        let mut chronology = Chronology::<f32, NullSummary<f32>>::new();
+        chronology
+            .insert_values(&[Entry::new(5, 2.0), Entry::new(10, 3.0)])
+            .expect("timestamps are monotonic");
+
+        assert_eq!(
+            chronology.insert_values(&[Entry::new(12, 4.0), Entry::new(11, 5.0)]),
+            Err(InsertError::NonMonotonicTimestamp {
+                previous: 12,
+                next: 11,
+            })
+        );
+        assert_eq!(chronology.len(), 2);
+        assert_eq!(
+            chronology.find_nearest_value(12, Direction::Backward),
+            Some(Entry::new(10, 3.0))
+        );
+    }
+
+    #[test]
+    fn simple_summary_tracks_empty_positive_and_negative_ranges() {
+        let mut chronology = Chronology::<f32, SimpleSummary<f32>>::new();
+        assert_eq!(chronology.summary().min, None);
+        assert_eq!(chronology.summary().max, None);
+
+        chronology
+            .insert_values(&[Entry::new(1, 3.0), Entry::new(2, 8.0)])
+            .expect("timestamps are monotonic");
+        assert_eq!(chronology.summary().min, Some(3.0));
+        assert_eq!(chronology.summary().max, Some(8.0));
+
+        chronology
+            .insert_values(&[Entry::new(3, -5.0), Entry::new(4, -2.0)])
+            .expect("timestamps are monotonic");
+        assert_eq!(chronology.summary().min, Some(-5.0));
+        assert_eq!(chronology.summary().max, Some(8.0));
     }
 }

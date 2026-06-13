@@ -8,26 +8,22 @@ use crate::{Entry, Summary};
 
 /// A [`Summary`] that tracks the minimum and maximum values.
 #[derive(Default)]
-pub struct SimpleSummary<V: Copy + Default + PartialOrd> {
+pub struct SimpleSummary<V: Copy + PartialOrd> {
     /// The minimum value seen by this summary.
-    pub min: V,
+    pub min: Option<V>,
     /// The maximum value seen by this summary.
-    pub max: V,
+    pub max: Option<V>,
 }
 
-impl<V: Copy + Default + PartialOrd> Summary<V> for SimpleSummary<V> {
-    fn batch_update(&mut self, entries: &[Entry<V>]) {
-        for e in entries {
-            self.update(e);
-        }
-    }
-
+impl<V: Copy + PartialOrd> Summary<V> for SimpleSummary<V> {
     fn update(&mut self, entry: &Entry<V>) {
-        if entry.value > self.max {
-            self.max = entry.value;
-        }
-        if entry.value < self.min {
-            self.min = entry.value;
-        }
+        self.max = match self.max {
+            Some(max) if max >= entry.value => Some(max),
+            _ => Some(entry.value),
+        };
+        self.min = match self.min {
+            Some(min) if min <= entry.value => Some(min),
+            _ => Some(entry.value),
+        };
     }
 }
