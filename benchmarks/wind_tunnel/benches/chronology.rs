@@ -6,14 +6,16 @@
 
 //! Baseline chronology storage benchmarks.
 
-use chronostore::{Chronology, Direction, Entry, NullSummary, SimpleSummary};
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
+use chronostore::{Chronology, Direction, Entry, NullSummary, SimpleSummary, Summary};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 
 const CHUNK_CAPACITY: usize = 4_096;
 const BATCH_LEN: usize = 1_000_000;
-const SERIES_LEN: usize = 1_000_000;
+const QUERY_SERIES_LENS: &[usize] = &[1_000_000, 10_000_000];
 const QUERY_LEN: usize = 16_384;
+const VIEWPORT_BUCKETS: usize = 1_024;
+const SEED_BATCH_LEN: usize = 65_536;
 
 fn insert_values(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert_values");
@@ -51,42 +53,117 @@ fn insert_values(c: &mut Criterion) {
 }
 
 fn find_nearest_value(c: &mut Criterion) {
-    let mut chronology = Chronology::<f64, NullSummary<f64>>::new();
-    let entries = build_entries(SERIES_LEN);
-    let queries = build_queries(QUERY_LEN, SERIES_LEN as u64);
-    chronology
-        .insert_values(&entries)
-        .expect("timestamps are monotonic");
-
     let mut group = c.benchmark_group("find_nearest_value");
-    group.throughput(Throughput::Elements(queries.len() as u64));
 
-    group.bench_function("forward_chunked_binary_search", |b| {
-        b.iter(|| {
-            for query in &queries {
-                black_box(
-                    chronology.find_nearest_value(black_box(*query), black_box(Direction::Forward)),
-                );
-            }
-        });
-    });
+    for &series_len in QUERY_SERIES_LENS {
+        let chronology = seed_chronology::<NullSummary<f64>>(series_len);
+        let queries = build_queries(QUERY_LEN, series_len as u64);
+        group.throughput(Throughput::Elements(queries.len() as u64));
 
-    group.bench_function("backward_chunked_binary_search", |b| {
-        b.iter(|| {
-            for query in &queries {
-                black_box(
-                    chronology
-                        .find_nearest_value(black_box(*query), black_box(Direction::Backward)),
-                );
-            }
-        });
-    });
+        group.bench_with_input(
+            BenchmarkId::new("forward_chunked_binary_search", series_len),
+            &series_len,
+            |b, _| {
+                b.iter(|| {
+                    for query in &queries {
+                        black_box(
+                            chronology.find_nearest_value(
+                                black_box(*query),
+                                black_box(Direction::Forward),
+                            ),
+                        );
+                    }
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("backward_chunked_binary_search", series_len),
+            &series_len,
+            |b, _| {
+                b.iter(|| {
+                    for query in &queries {
+                        black_box(
+                            chronology.find_nearest_value(
+                                black_box(*query),
+                                black_box(Direction::Backward),
+                            ),
+                        );
+                    }
+                });
+            },
+        );
+    }
 
     group.finish();
 }
 
+fn range_summaries(c: &mut Criterion) {
+    let mut group = c.benchmark_group("range_summaries");
+
+    for &series_len in QUERY_SERIES_LENS {
+        let chronology = seed_chronology::<SimpleSummary<f64>>(series_len);
+        let end = (series_len as u64).saturating_mul(16);
+
+        group.throughput(Throughput::Elements(series_len as u64));
+        group.bench_with_input(
+            BenchmarkId::new("full_series_summary", series_len),
+            &series_len,
+            |b, _| {
+                b.iter(|| {
+                    let summary = chronology.range_summary(black_box(0), black_box(end));
+                    black_box(summary.len);
+                    black_box(summary.summary);
+                });
+            },
+        );
+
+        group.throughput(Throughput::Elements(VIEWPORT_BUCKETS as u64));
+        group.bench_with_input(
+            BenchmarkId::new("viewport_buckets", series_len),
+            &series_len,
+            |b, _| {
+                b.iter(|| {
+                    let summaries = chronology.summarize_range(
+                        black_box(0),
+                        black_box(end),
+                        black_box(VIEWPORT_BUCKETS),
+                    );
+                    black_box(summaries.len());
+                    black_box(summaries);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn seed_chronology<S>(len: usize) -> Chronology<f64, S>
+where
+    S: Summary<f64>,
+{
+    let mut chronology = Chronology::<f64, S>::with_chunk_capacity(CHUNK_CAPACITY);
+    let mut start = 0;
+
+    while start < len {
+        let end = start.saturating_add(SEED_BATCH_LEN).min(len);
+        let entries = build_entries_range(start, end);
+        chronology
+            .insert_values(&entries)
+            .expect("timestamps are monotonic");
+        start = end;
+    }
+
+    chronology
+}
+
 fn build_entries(len: usize) -> Vec<Entry<f64>> {
-    (0..len)
+    build_entries_range(0, len)
+}
+
+fn build_entries_range(start: usize, end: usize) -> Vec<Entry<f64>> {
+    (start..end)
         .map(|index| {
             let timestamp = (index as u64).saturating_mul(16);
             let value = f64::from((index % 257) as u32) * 0.25;
@@ -111,6 +188,6 @@ fn build_queries(len: usize, series_len: u64) -> Vec<u64> {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(10);
-    targets = insert_values, find_nearest_value
+    targets = insert_values, find_nearest_value, range_summaries
 }
 criterion_main!(benches);
