@@ -5,7 +5,7 @@
 // except according to those terms.
 
 use crate::{Entry, Summary};
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 /// A [`Summary`] that does nothing.
 #[derive(Default)]

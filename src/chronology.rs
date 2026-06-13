@@ -5,6 +5,7 @@
 // except according to those terms.
 
 use crate::{Direction, Entry, Summary};
+use alloc::vec::Vec;
 
 /// A stream of values over time for a single variable.
 ///

@@ -33,6 +33,7 @@
 //! here to get something working. Over time, the implementation
 //! will evolve and become significantly more sophisticated.
 
+#![no_std]
 #![warn(clippy::doc_markdown, missing_docs)]
 #![deny(
     trivial_numeric_casts,
@@ -41,6 +42,8 @@
     unused_import_braces,
     unused_qualifications
 )]
+
+extern crate alloc;
 
 mod chronology;
 mod entry;
