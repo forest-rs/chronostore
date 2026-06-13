@@ -8,7 +8,17 @@ use crate::Entry;
 
 /// Pluggable means of maintaining summary information about the
 /// data stored in a [`Chronology`](crate::Chronology).
-pub trait Summary<V> {
+///
+/// Summary values are mergeable so callers can build range and viewport
+/// summaries without decoding every sample. Implementations should make
+/// [`Summary::merge`] associative: merging `a` with `b`, then with `c`, should
+/// describe the same data as merging `a` with the result of `b` and `c`.
+pub trait Summary<V>: Clone + Default {
+    /// Return an empty summary value.
+    fn empty() -> Self {
+        Self::default()
+    }
+
     /// Update the summary with a batch of entries.
     ///
     /// Some summary implementations may be able to operate
@@ -22,4 +32,7 @@ pub trait Summary<V> {
 
     /// Update the summary with a single new [`Entry`].
     fn update(&mut self, entry: &Entry<V>);
+
+    /// Merge another summary into this summary.
+    fn merge(&mut self, other: &Self);
 }

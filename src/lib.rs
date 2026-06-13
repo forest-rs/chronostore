@@ -51,7 +51,9 @@ mod null_summary;
 mod simple_summary;
 mod summary;
 
-pub use self::chronology::{Chronology, InsertError, DEFAULT_CHUNK_CAPACITY};
+pub use self::chronology::{
+    Chronology, ChunkSummary, InsertError, RangeSummary, DEFAULT_CHUNK_CAPACITY, SUMMARY_FANOUT,
+};
 pub use self::entry::Entry;
 pub use self::null_summary::NullSummary;
 pub use self::simple_summary::SimpleSummary;
@@ -72,6 +74,7 @@ pub enum Direction {
 #[cfg(test)]
 mod tests {
     use crate::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn basics() {
@@ -184,5 +187,72 @@ mod tests {
             .expect("timestamps are monotonic");
         assert_eq!(chronology.summary().min, Some(-5.0));
         assert_eq!(chronology.summary().max, Some(8.0));
+    }
+
+    #[test]
+    fn exposes_chunk_summaries_and_summary_pyramid_shape() {
+        let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity(2);
+        let entries = (0..18)
+            .map(|value| Entry::new(value, value))
+            .collect::<Vec<_>>();
+        chronology
+            .insert_values(&entries)
+            .expect("timestamps are monotonic");
+
+        assert_eq!(chronology.chunk_count(), 9);
+        assert_eq!(chronology.sealed_chunk_count(), 9);
+        assert_eq!(chronology.summary_level_count(), 2);
+        assert_eq!(chronology.summary_node_count(0), Some(9));
+        assert_eq!(chronology.summary_node_count(1), Some(1));
+
+        let first = chronology.chunk_summary(0).expect("first chunk exists");
+        assert_eq!(first.start, 0);
+        assert_eq!(first.end, 1);
+        assert_eq!(first.len, 2);
+        assert_eq!(first.summary.min, Some(0));
+        assert_eq!(first.summary.max, Some(1));
+    }
+
+    #[test]
+    fn summarizes_half_open_timestamp_ranges() {
+        let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity(2);
+        let entries = (0..20)
+            .map(|value| Entry::new(value, value))
+            .collect::<Vec<_>>();
+        chronology
+            .insert_values(&entries)
+            .expect("timestamps are monotonic");
+
+        let summary = chronology.range_summary(3, 15);
+        assert_eq!(summary.start, 3);
+        assert_eq!(summary.end, 15);
+        assert_eq!(summary.len, 12);
+        assert_eq!(summary.summary.min, Some(3));
+        assert_eq!(summary.summary.max, Some(14));
+
+        let empty = chronology.range_summary(15, 15);
+        assert_eq!(empty.len, 0);
+        assert_eq!(empty.summary.min, None);
+        assert_eq!(empty.summary.max, None);
+    }
+
+    #[test]
+    fn summarizes_viewport_buckets() {
+        let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity(2);
+        let entries = (0..16)
+            .map(|value| Entry::new(value, value))
+            .collect::<Vec<_>>();
+        chronology
+            .insert_values(&entries)
+            .expect("timestamps are monotonic");
+
+        let summaries = chronology.summarize_range(0, 16, 4);
+        assert_eq!(summaries.len(), 4);
+        assert_eq!(summaries[0].len, 4);
+        assert_eq!(summaries[0].summary.min, Some(0));
+        assert_eq!(summaries[0].summary.max, Some(3));
+        assert_eq!(summaries[3].len, 4);
+        assert_eq!(summaries[3].summary.min, Some(12));
+        assert_eq!(summaries[3].summary.max, Some(15));
     }
 }
