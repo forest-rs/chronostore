@@ -11,4 +11,11 @@ homepage = "https://github.com/endoli/chronostore.rs"
 repository = "https://github.com/endoli/chronostore.rs"
 edition = "2021"
 
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "benchmarks/wind_tunnel",
+]
+
 [dependencies]

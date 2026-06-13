@@ -32,6 +32,9 @@ will evolve and become significantly more sophisticated.
 Chronostore must be fast at inserts, fast at queries,
 and memory efficient.
 
+The core crate is `no_std` plus `alloc`. Benchmarks and other tooling live in
+separate workspace crates so the storage kernel stays small.
+
 Dual licensed under the MIT and Apache 2 licenses.
 
 ## Documentation
@@ -53,6 +56,23 @@ chronostore = "0.0.1"
 
 Things are under active development. This project is not quite
 usable yet as some of the basic functionality is being written.
+
+The current direction is a Gorilla-inspired in-memory model: monotonic samples
+are appended into raw chunks, each chunk maintains summary state, and lookup
+uses the chunk boundaries before searching within a chunk. Future work will add
+compressed chunks and hierarchical summaries for zoomable timeline consumers
+such as profilers and per-frame diagnostics.
+
+## Benchmarks
+
+The Criterion wind tunnel lives outside the core crate:
+
+```sh
+cargo bench -p wind_tunnel
+```
+
+It includes million-point insert and lookup baselines for the chunked storage
+model.
 
 ## Contribution
 
