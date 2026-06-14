@@ -594,10 +594,7 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     }
 
     fn enforce_retention(&mut self) {
-        let Some(max_sealed_chunks) = self.retention_policy.sealed_chunk_limit() else {
-            return;
-        };
-        let evict_count = self.sealed_chunks.len().saturating_sub(max_sealed_chunks);
+        let evict_count = self.retention_eviction_count();
         if evict_count == 0 {
             return;
         }
@@ -612,6 +609,28 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
         self.sealed_chunks.drain(0..evict_count);
         self.len -= evicted_len;
         self.rebuild_summary_state();
+    }
+
+    fn retention_eviction_count(&self) -> usize {
+        let mut evict_count = 0;
+
+        if let Some(max_age) = self.retention_policy.age_limit() {
+            if let Some(latest_timestamp) = self.last_timestamp() {
+                let cutoff = latest_timestamp.saturating_sub(max_age);
+                while evict_count < self.sealed_chunks.len()
+                    && self.sealed_chunks[evict_count].end_timestamp() < cutoff
+                {
+                    evict_count += 1;
+                }
+            }
+        }
+
+        if let Some(max_sealed_chunks) = self.retention_policy.sealed_chunk_limit() {
+            let remaining = self.sealed_chunks.len().saturating_sub(evict_count);
+            evict_count += remaining.saturating_sub(max_sealed_chunks);
+        }
+
+        evict_count
     }
 
     fn rebuild_summary_state(&mut self) {

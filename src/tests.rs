@@ -337,6 +337,89 @@ fn retention_keeps_latest_sealed_chunks() {
 }
 
 #[test]
+fn retention_keeps_sealed_chunks_inside_time_window() {
+    let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity_and_retention(
+        2,
+        RetentionPolicy::max_age(3),
+    );
+    let entries = (0..10)
+        .map(|value| Entry::new(value, value))
+        .collect::<Vec<_>>();
+    chronology
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert_eq!(chronology.len(), 4);
+    assert_eq!(chronology.sealed_chunk_count(), 2);
+    assert_eq!(
+        chronology.entries_in_range(0, 10),
+        vec![
+            Entry::new(6, 6),
+            Entry::new(7, 7),
+            Entry::new(8, 8),
+            Entry::new(9, 9),
+        ]
+    );
+    assert_eq!(chronology.summary().min, Some(6));
+    assert_eq!(chronology.summary().max, Some(9));
+}
+
+#[test]
+fn time_window_retention_uses_sealed_chunk_granularity() {
+    let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity_and_retention(
+        4,
+        RetentionPolicy::max_age(3),
+    );
+    let entries = (0..6)
+        .map(|value| Entry::new(value, value))
+        .collect::<Vec<_>>();
+    chronology
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert_eq!(chronology.len(), 6);
+    assert_eq!(chronology.sealed_chunk_count(), 1);
+    assert_eq!(chronology.chunk_count(), 2);
+    assert_eq!(
+        chronology.entries_in_range(0, 6),
+        vec![
+            Entry::new(0, 0),
+            Entry::new(1, 1),
+            Entry::new(2, 2),
+            Entry::new(3, 3),
+            Entry::new(4, 4),
+            Entry::new(5, 5),
+        ]
+    );
+}
+
+#[test]
+fn retention_policies_can_combine_time_and_chunk_limits() {
+    let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity_and_retention(
+        2,
+        RetentionPolicy::max_age(10).with_max_sealed_chunks(2),
+    );
+    let entries = (0..10)
+        .map(|value| Entry::new(value, value))
+        .collect::<Vec<_>>();
+    chronology
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert_eq!(chronology.len(), 4);
+    assert_eq!(chronology.sealed_chunk_count(), 2);
+    assert_eq!(
+        chronology.entries_in_range(0, 10),
+        vec![
+            Entry::new(6, 6),
+            Entry::new(7, 7),
+            Entry::new(8, 8),
+            Entry::new(9, 9),
+        ]
+    );
+}
+
+#[test]
 fn setting_retention_rebuilds_summaries_and_keeps_open_chunk() {
     let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity(2);
     let entries = (0..9)

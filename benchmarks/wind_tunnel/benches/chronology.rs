@@ -21,6 +21,7 @@ const VIEWPORT_BUCKETS: usize = 1_024;
 const EXACT_RANGE_LEN: usize = 65_536;
 const SEED_BATCH_LEN: usize = 65_536;
 const RETENTION_SEALED_CHUNKS: usize = 256;
+const RETENTION_MAX_AGE: u64 = (RETENTION_SEALED_CHUNKS as u64) * (CHUNK_CAPACITY as u64) * 16;
 
 fn insert_values(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert_values");
@@ -309,6 +310,34 @@ fn retention(c: &mut Criterion) {
             Chronology::<f64, SimpleSummary<f64>>::with_chunk_capacity_and_retention(
                 CHUNK_CAPACITY,
                 RetentionPolicy::max_sealed_chunks(RETENTION_SEALED_CHUNKS),
+            );
+        let mut next = 0;
+
+        while chronology.sealed_chunk_count() < RETENTION_SEALED_CHUNKS {
+            let entries = build_entries_range(next, next + CHUNK_CAPACITY);
+            chronology
+                .insert_values(&entries)
+                .expect("timestamps are monotonic");
+            next += CHUNK_CAPACITY;
+        }
+
+        b.iter(|| {
+            let entries = build_entries_range(next, next + CHUNK_CAPACITY);
+            chronology
+                .insert_values(black_box(&entries))
+                .expect("timestamps are monotonic");
+            next += CHUNK_CAPACITY;
+
+            black_box(chronology.sealed_chunk_count());
+            black_box(chronology.summary());
+        });
+    });
+
+    group.bench_function("append_chunk_with_time_window_256", |b| {
+        let mut chronology =
+            Chronology::<f64, SimpleSummary<f64>>::with_chunk_capacity_and_retention(
+                CHUNK_CAPACITY,
+                RetentionPolicy::max_age(RETENTION_MAX_AGE),
             );
         let mut next = 0;
 
