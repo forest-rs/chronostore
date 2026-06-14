@@ -48,6 +48,7 @@ extern crate alloc;
 mod chronology;
 mod entry;
 mod envelope;
+mod lttb;
 mod null_summary;
 mod simple_summary;
 mod stats_summary;
@@ -61,6 +62,7 @@ pub use self::chronology::{
 };
 pub use self::entry::Entry;
 pub use self::envelope::{EnvelopeBucket, EnvelopeSummary};
+pub use self::lttb::lttb;
 pub use self::null_summary::NullSummary;
 pub use self::simple_summary::SimpleSummary;
 pub use self::stats_summary::StatsSummary;

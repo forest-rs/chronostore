@@ -284,6 +284,36 @@ fn builds_min_max_range_envelopes() {
 }
 
 #[test]
+fn lttb_handles_small_targets() {
+    let entries = [Entry::new(0, 0.0), Entry::new(1, 2.0), Entry::new(2, 4.0)];
+
+    assert_eq!(lttb(&entries, 0, |value| value), Vec::new());
+    assert_eq!(lttb(&entries, 1, |value| value), vec![Entry::new(0, 0.0)]);
+    assert_eq!(
+        lttb(&entries, 2, |value| value),
+        vec![Entry::new(0, 0.0), Entry::new(2, 4.0)]
+    );
+    assert_eq!(lttb(&entries, 4, |value| value), entries.to_vec());
+}
+
+#[test]
+fn lttb_preserves_first_last_and_spikes() {
+    let entries = [
+        Entry::new(0, 0.0),
+        Entry::new(1, 0.0),
+        Entry::new(2, 10.0),
+        Entry::new(3, 0.0),
+        Entry::new(4, 0.0),
+    ];
+
+    let sampled = lttb(&entries, 3, |value| value);
+    assert_eq!(
+        sampled,
+        vec![Entry::new(0, 0.0), Entry::new(2, 10.0), Entry::new(4, 0.0),]
+    );
+}
+
+#[test]
 fn returns_exact_entries_in_half_open_ranges() {
     let mut chronology = Chronology::<u64, NullSummary<u64>>::with_chunk_capacity(3);
     let entries = (0..8)

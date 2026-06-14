@@ -7,7 +7,7 @@
 //! Baseline chronology storage benchmarks.
 
 use chronostore::{
-    Chronology, ChunkCodec, Direction, Entry, GorillaF64Codec, NullSummary, RawCodec,
+    lttb, Chronology, ChunkCodec, Direction, Entry, GorillaF64Codec, NullSummary, RawCodec,
     RetentionPolicy, SimpleSummary, Summary,
 };
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
@@ -19,6 +19,7 @@ const QUERY_SERIES_LENS: &[usize] = &[1_000_000, 10_000_000];
 const QUERY_LEN: usize = 16_384;
 const VIEWPORT_BUCKETS: usize = 1_024;
 const EXACT_RANGE_LEN: usize = 65_536;
+const LTTB_TARGET_LEN: usize = 1_024;
 const SEED_BATCH_LEN: usize = 65_536;
 const RETENTION_SEALED_CHUNKS: usize = 256;
 const RETENTION_MAX_AGE: u64 = (RETENTION_SEALED_CHUNKS as u64) * (CHUNK_CAPACITY as u64) * 16;
@@ -364,6 +365,23 @@ fn retention(c: &mut Criterion) {
     group.finish();
 }
 
+fn lttb_downsampling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("lttb_downsampling");
+    let entries = build_entries(BATCH_LEN);
+
+    group.throughput(Throughput::Elements(BATCH_LEN as u64));
+    group.bench_function("entries_1m_to_1024", |b| {
+        b.iter(|| {
+            let sampled = lttb(black_box(&entries), black_box(LTTB_TARGET_LEN), |value| {
+                value
+            });
+            black_box(sampled);
+        });
+    });
+
+    group.finish();
+}
+
 fn seed_chronology<S>(len: usize) -> Chronology<f64, S>
 where
     S: Summary<f64>,
@@ -423,6 +441,6 @@ criterion_group! {
     config = Criterion::default().sample_size(10);
     targets = insert_values, find_nearest_value, range_summaries, codec_storage,
         codec_find_nearest_value, codec_range_summaries, codec_exact_range_entries,
-        retention
+        retention, lttb_downsampling
 }
 criterion_main!(benches);
