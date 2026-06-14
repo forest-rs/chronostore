@@ -58,10 +58,19 @@ pub trait ChunkCodec<V: Copy> {
 }
 
 /// Codec that stores sealed chunks as raw timestamp and value columns.
+///
+/// `RawCodec` is the default third generic parameter for
+/// [`Chronology`](crate::Chronology). Use it when query speed and simple
+/// storage layout matter more than sealed-chunk compression.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RawCodec;
 
 /// Raw encoded sealed chunk payload.
+///
+/// This is produced internally by [`RawCodec`] as its
+/// [`ChunkCodec::Encoded`] representation. Callers normally interact with it
+/// through [`Chronology`](crate::Chronology) query methods rather than naming
+/// this type directly.
 pub struct RawEncodedChunk<V: Copy> {
     timestamps: Vec<u64>,
     values: Vec<V>,
@@ -126,10 +135,34 @@ impl<V: Copy> ChunkCodec<V> for RawCodec {
 /// the first IEEE-754 bit pattern and then use Gorilla-style XOR control bits
 /// for later values. The codec also stores periodic decoder anchors so random
 /// access only has to replay from the nearest anchor within a sealed chunk.
+///
+/// The compression scheme is based on the time-series encoding described in
+/// Pelkonen et al., [*Gorilla: A Fast, Scalable, In-Memory Time Series
+/// Database*](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf), VLDB 2015.
+/// Chronostore's implementation is not a full Gorilla database; it is a sealed
+/// chunk codec that can be selected with
+/// [`GorillaF64Chronology`](super::GorillaF64Chronology) or with
+/// `Chronology<f64, S, GorillaF64Codec>`.
+///
+/// ```
+/// use chronostore::{Entry, GorillaF64Chronology, StatsSummary};
+///
+/// let mut series = GorillaF64Chronology::<StatsSummary<f64>>::with_chunk_capacity(2);
+/// series
+///     .insert_values(&[Entry::new(0, 1.0), Entry::new(16, 1.25)])
+///     .expect("timestamps are monotonic");
+///
+/// assert_eq!(series.sealed_chunk_count(), 1);
+/// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GorillaF64Codec;
 
 /// Encoded sealed chunk payload produced by [`GorillaF64Codec`].
+///
+/// This is the codec's [`ChunkCodec::Encoded`] representation for sealed
+/// chunks. Callers usually observe its effects through
+/// [`Chronology::sealed_encoded_size`](crate::Chronology::sealed_encoded_size)
+/// and query methods rather than constructing it directly.
 pub struct GorillaF64EncodedChunk {
     len: usize,
     first_timestamp: u64,

@@ -7,6 +7,12 @@
 use crate::Summary;
 
 /// Owned summary metadata for a timestamp range.
+///
+/// `RangeSummary` is returned by [`Chronology::range_summary`](crate::Chronology::range_summary)
+/// and [`Chronology::summarize_range`](crate::Chronology::summarize_range), and
+/// is visited by [`Chronology::visit_range_summaries`](crate::Chronology::visit_range_summaries).
+/// The `summary` field is the caller-selected [`Summary`] implementation for
+/// the entries whose timestamps fall inside `start..end`.
 #[derive(Clone)]
 pub struct RangeSummary<S> {
     /// Inclusive start of the summarized timestamp range.

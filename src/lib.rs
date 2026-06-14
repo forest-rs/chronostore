@@ -33,7 +33,63 @@
 //! state, supports exact range access, supports bucketed range summaries for
 //! zoomed views, and provides display helpers such as min/max envelopes and
 //! LTTB over decoded entries. Raw sealed chunks are the default storage codec;
-//! a Gorilla-inspired `f64` codec is available for compression experiments.
+//! [`GorillaF64Codec`] is available for compression experiments.
+//!
+//! ## Basic Use
+//!
+//! Create a [`Chronology`], insert monotonic [`Entry`] values, and query either
+//! exact samples or mergeable summaries.
+//!
+//! ```
+//! use chronostore::{Chronology, Direction, Entry, StatsSummary};
+//!
+//! let mut series = Chronology::<f64, StatsSummary<f64>>::new();
+//! series
+//!     .insert_values(&[
+//!         Entry::new(0, 1.0),
+//!         Entry::new(5, 2.5),
+//!         Entry::new(10, 2.0),
+//!     ])
+//!     .expect("timestamps are monotonic");
+//!
+//! assert_eq!(
+//!     series.find_nearest_value(7, Direction::Backward),
+//!     Some(Entry::new(5, 2.5))
+//! );
+//!
+//! let summary = series.range_summary(0, 11);
+//! assert_eq!(summary.len, 3);
+//! assert_eq!(summary.summary.max, Some(2.5));
+//! ```
+//!
+//! ## Display Queries
+//!
+//! Bucketed summaries are useful for zoomed timelines and charts. With a
+//! summary that exposes min/max values, [`Chronology::range_envelope`] returns
+//! buckets that can be drawn as a spike-preserving graph envelope. When a
+//! line-shaped sample is preferable, use [`lttb`] over exact entries.
+//!
+//! ```
+//! use chronostore::{lttb, Chronology, Entry, StatsSummary};
+//!
+//! let mut series = Chronology::<f64, StatsSummary<f64>>::new();
+//! series
+//!     .insert_values(&[
+//!         Entry::new(0, 1.0),
+//!         Entry::new(1, 8.0),
+//!         Entry::new(2, 2.0),
+//!         Entry::new(3, 4.0),
+//!     ])
+//!     .expect("timestamps are monotonic");
+//!
+//! let envelope = series.range_envelope(0, 4, 2);
+//! assert_eq!(envelope.len(), 2);
+//! assert_eq!(envelope[0].max, Some(8.0));
+//!
+//! let visible_entries = series.entries_in_range(0, 4);
+//! let line = lttb(&visible_entries, 3, |value| value);
+//! assert_eq!(line.len(), 3);
+//! ```
 
 #![no_std]
 #![warn(clippy::doc_markdown, missing_docs)]

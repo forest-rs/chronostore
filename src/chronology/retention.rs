@@ -6,6 +6,11 @@
 
 /// Retention policy for chronology chunks.
 ///
+/// Pass a `RetentionPolicy` to
+/// [`Chronology::with_retention_policy`](crate::Chronology::with_retention_policy),
+/// [`Chronology::with_chunk_capacity_and_retention`](crate::Chronology::with_chunk_capacity_and_retention),
+/// or [`Chronology::set_retention_policy`](crate::Chronology::set_retention_policy).
+///
 /// Retention is enforced at sealed-chunk granularity. The currently open chunk
 /// is not counted against the sealed-chunk limit, is not partially evicted by
 /// time-window retention, and may contain samples older than the configured

@@ -9,6 +9,10 @@ use crate::Entry;
 /// Pluggable means of maintaining summary information about the
 /// data stored in a [`Chronology`](crate::Chronology).
 ///
+/// `Summary` is the second generic parameter of [`Chronology`](crate::Chronology).
+/// Chronostore updates it during insertion and merges it when answering range,
+/// bucketed-summary, and envelope queries.
+///
 /// Summary values are mergeable so callers can build range and viewport
 /// summaries without decoding every sample. Implementations should make
 /// [`Summary::merge`] associative: merging `a` with `b`, then with `c`, should

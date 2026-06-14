@@ -361,6 +361,19 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     /// bucket per pixel column. With a min/max summary, the returned buckets can
     /// be used as a visualization envelope that preserves spikes without
     /// decoding every sample in the visible range.
+    ///
+    /// ```
+    /// use chronostore::{Chronology, Entry, StatsSummary};
+    ///
+    /// let mut series = Chronology::<u64, StatsSummary<u64>>::new();
+    /// series
+    ///     .insert_values(&[Entry::new(0, 4), Entry::new(1, 9), Entry::new(2, 5)])
+    ///     .expect("timestamps are monotonic");
+    ///
+    /// let buckets = series.summarize_range(0, 3, 2);
+    /// assert_eq!(buckets.len(), 2);
+    /// assert_eq!(buckets[0].summary.max, Some(4));
+    /// ```
     pub fn summarize_range(
         &self,
         start: u64,
@@ -379,6 +392,21 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     ///
     /// This is the no-allocation form of [`Chronology::summarize_range`]. The
     /// range is half-open: `start` is included and `end` is excluded.
+    ///
+    /// ```
+    /// use chronostore::{Chronology, Entry, StatsSummary};
+    ///
+    /// let mut series = Chronology::<u64, StatsSummary<u64>>::new();
+    /// series
+    ///     .insert_values(&[Entry::new(0, 4), Entry::new(1, 9), Entry::new(2, 5)])
+    ///     .expect("timestamps are monotonic");
+    ///
+    /// let mut bucket_lengths = Vec::new();
+    /// series.visit_range_summaries(0, 3, 2, |summary| {
+    ///     bucket_lengths.push(summary.len);
+    /// });
+    /// assert_eq!(bucket_lengths, vec![1, 2]);
+    /// ```
     pub fn visit_range_summaries<F>(
         &self,
         start: u64,
@@ -408,6 +436,19 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     /// Envelope buckets are useful for profiler and telemetry charts because
     /// each bucket carries the vertical span that should be drawn for that time
     /// slice.
+    ///
+    /// ```
+    /// use chronostore::{Chronology, Entry, StatsSummary};
+    ///
+    /// let mut series = Chronology::<u64, StatsSummary<u64>>::new();
+    /// series
+    ///     .insert_values(&[Entry::new(0, 4), Entry::new(1, 9), Entry::new(2, 5)])
+    ///     .expect("timestamps are monotonic");
+    ///
+    /// let envelope = series.range_envelope(0, 3, 1);
+    /// assert_eq!(envelope[0].min, Some(4));
+    /// assert_eq!(envelope[0].max, Some(9));
+    /// ```
     pub fn range_envelope(
         &self,
         start: u64,

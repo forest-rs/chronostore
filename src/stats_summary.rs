@@ -9,9 +9,26 @@ use core::ops::AddAssign;
 
 /// A [`Summary`] that tracks common numeric statistics.
 ///
+/// Use `StatsSummary<V>` as the summary parameter for a
+/// [`Chronology`](crate::Chronology) when range queries need min/max, sum,
+/// count, and latest value metadata. Because it exposes min/max values, it also
+/// works with [`Chronology::range_envelope`](crate::Chronology::range_envelope).
+///
 /// `StatsSummary` tracks minimum, maximum, sum, count, and the latest value in
 /// insertion order. Chronostore merges summaries in chronological order, so the
 /// `latest` field remains the last value covered by the merged summary.
+///
+/// ```
+/// use chronostore::{Chronology, Entry, StatsSummary};
+///
+/// let mut series = Chronology::<f64, StatsSummary<f64>>::new();
+/// series
+///     .insert_values(&[Entry::new(0, 1.0), Entry::new(1, 3.0)])
+///     .expect("timestamps are monotonic");
+///
+/// assert_eq!(series.summary().sum, 4.0);
+/// assert_eq!(series.summary().latest, Some(3.0));
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StatsSummary<V> {
     /// The minimum value seen by this summary.

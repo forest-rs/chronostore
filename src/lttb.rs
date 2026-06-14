@@ -14,10 +14,36 @@ use alloc::vec::Vec;
 /// the x-axis, converts them to `f64` for area comparisons, and uses
 /// `project_value` to map each stored value into a y-axis coordinate.
 ///
+/// The algorithm was defined by Sveinn Steinarsson in [*Downsampling Time
+/// Series for Visual Representation*](https://skemman.is/bitstream/1946/15343/3/SS_MSthesis.pdf),
+/// 2013.
+///
+/// This function borrows the input slice; it does not copy every input entry.
+/// It allocates and returns a `Vec` containing the selected output entries. If
+/// the input slice comes from [`Chronology::entries_in_range`](crate::Chronology::entries_in_range),
+/// that range extraction has already materialized exact entries before LTTB
+/// runs.
+///
 /// When `target_len` is greater than or equal to `entries.len()`, all entries
 /// are returned. For small targets, `target_len == 0` returns no entries,
 /// `target_len == 1` returns the first entry, and `target_len == 2` returns the
 /// first and last entries.
+///
+/// ```
+/// use chronostore::{lttb, Entry};
+///
+/// let entries = [
+///     Entry::new(0, 1.0),
+///     Entry::new(1, 12.0),
+///     Entry::new(2, 2.0),
+///     Entry::new(3, 3.0),
+/// ];
+///
+/// let sampled = lttb(&entries, 3, |value| value);
+/// assert_eq!(sampled.first(), Some(&Entry::new(0, 1.0)));
+/// assert_eq!(sampled.last(), Some(&Entry::new(3, 3.0)));
+/// assert_eq!(sampled.len(), 3);
+/// ```
 pub fn lttb<V, F>(entries: &[Entry<V>], target_len: usize, project_value: F) -> Vec<Entry<V>>
 where
     V: Copy,

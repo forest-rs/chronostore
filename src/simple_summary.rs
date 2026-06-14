@@ -7,6 +7,10 @@
 use crate::{Entry, Summary};
 
 /// A [`Summary`] that tracks the minimum and maximum values.
+///
+/// Use `SimpleSummary<V>` as the summary parameter for a
+/// [`Chronology`](crate::Chronology) when range queries and envelopes only need
+/// min/max values.
 #[derive(Clone, Copy)]
 pub struct SimpleSummary<V: Copy + PartialOrd> {
     /// The minimum value seen by this summary.

@@ -12,6 +12,11 @@ use core::marker::PhantomData;
 use core::ops::Range;
 
 /// Borrowed summary metadata for one chronology chunk.
+///
+/// `ChunkSummary` is returned by [`Chronology::chunk_summary`](crate::Chronology::chunk_summary)
+/// for diagnostics and storage inspection. It borrows the chunk's summary from
+/// the chronology, so it is a view into existing storage rather than an owned
+/// aggregate.
 #[derive(Clone, Copy)]
 pub struct ChunkSummary<'a, S> {
     /// Start timestamp for the chunk.
