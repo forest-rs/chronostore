@@ -122,6 +122,33 @@ fn simple_summary_tracks_empty_positive_and_negative_ranges() {
 }
 
 #[test]
+fn stats_summary_tracks_common_numeric_fields() {
+    let mut chronology = Chronology::<f64, StatsSummary<f64>>::with_chunk_capacity(2);
+    chronology
+        .insert_values(&[
+            Entry::new(1, 3.0),
+            Entry::new(2, 8.0),
+            Entry::new(3, -5.0),
+            Entry::new(4, 2.0),
+        ])
+        .expect("timestamps are monotonic");
+
+    assert_eq!(chronology.summary().min, Some(-5.0));
+    assert_eq!(chronology.summary().max, Some(8.0));
+    assert_eq!(chronology.summary().sum, 8.0);
+    assert_eq!(chronology.summary().count, 4);
+    assert_eq!(chronology.summary().latest, Some(2.0));
+
+    let range = chronology.range_summary(2, 4);
+    assert_eq!(range.len, 2);
+    assert_eq!(range.summary.min, Some(-5.0));
+    assert_eq!(range.summary.max, Some(8.0));
+    assert_eq!(range.summary.sum, 3.0);
+    assert_eq!(range.summary.count, 2);
+    assert_eq!(range.summary.latest, Some(-5.0));
+}
+
+#[test]
 fn exposes_chunk_summaries_and_summary_pyramid_shape() {
     let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity(2);
     let entries = (0..18)

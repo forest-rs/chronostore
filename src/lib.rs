@@ -49,6 +49,7 @@ mod chronology;
 mod entry;
 mod null_summary;
 mod simple_summary;
+mod stats_summary;
 mod summary;
 #[cfg(test)]
 mod tests;
@@ -60,6 +61,7 @@ pub use self::chronology::{
 pub use self::entry::Entry;
 pub use self::null_summary::NullSummary;
 pub use self::simple_summary::SimpleSummary;
+pub use self::stats_summary::StatsSummary;
 pub use self::summary::Summary;
 
 /// Direction to search for a value from a timestamp.
