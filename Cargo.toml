@@ -7,7 +7,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/endoli/chronostore.rs"
 
@@ -60,3 +60,11 @@ clippy.negative_feature_names = "warn"
 clippy.redundant_feature_names = "warn"
 clippy.wildcard_dependencies = "warn"
 # END LINEBENDER LINT SET
+
+[profile.ci]
+inherits = "dev"
+debug = 0
+strip = "debuginfo"
+
+[profile.ci.package."*"]
+debug-assertions = true

@@ -64,7 +64,7 @@
 //! Bucketed summaries are useful for zoomed timelines and charts. With a
 //! summary that exposes min/max values, [`Chronology::range_envelope`] returns
 //! buckets that can be drawn as a spike-preserving graph envelope. When a
-//! line-shaped sample is preferable, use [`lttb`] over exact entries.
+//! line-shaped sample is preferable, use [`lttb()`] over exact entries.
 //!
 //! ```
 //! use chronostore::{lttb, Chronology, Entry, StatsSummary};
