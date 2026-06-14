@@ -293,3 +293,48 @@ fn gorilla_f64_codec_matches_raw_queries() {
         assert_eq!(raw_bucket.summary.max, gorilla_bucket.summary.max);
     }
 }
+
+#[test]
+fn gorilla_f64_codec_matches_raw_queries_after_decoder_anchors() {
+    let mut timestamp = 0;
+    let entries = (0..512)
+        .map(|index| {
+            timestamp += 11 + (index % 7) as u64;
+            let value = f64::from(((index * 17) % 257) as u32) * 0.125;
+            Entry::new(timestamp, value)
+        })
+        .collect::<Vec<_>>();
+
+    let mut raw = Chronology::<f64, SimpleSummary<f64>>::with_chunk_capacity(512);
+    let mut gorilla = GorillaF64Chronology::<SimpleSummary<f64>>::with_chunk_capacity(512);
+
+    raw.insert_values(&entries)
+        .expect("timestamps are monotonic");
+    gorilla
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert_eq!(raw.sealed_chunk_count(), 1);
+    assert_eq!(gorilla.sealed_chunk_count(), 1);
+
+    for (timestamp, direction) in [
+        (entries[129].timestamp - 1, Direction::Forward),
+        (entries[130].timestamp, Direction::Backward),
+        (entries[300].timestamp + 3, Direction::Forward),
+        (entries[384].timestamp, Direction::Backward),
+        (entries[511].timestamp + 100, Direction::Backward),
+    ] {
+        assert_eq!(
+            raw.find_nearest_value(timestamp, direction),
+            gorilla.find_nearest_value(timestamp, direction)
+        );
+    }
+
+    let start = entries[140].timestamp;
+    let end = entries[430].timestamp + 1;
+    let raw_summary = raw.range_summary(start, end);
+    let gorilla_summary = gorilla.range_summary(start, end);
+    assert_eq!(raw_summary.len, gorilla_summary.len);
+    assert_eq!(raw_summary.summary.min, gorilla_summary.summary.min);
+    assert_eq!(raw_summary.summary.max, gorilla_summary.summary.max);
+}

@@ -9,6 +9,8 @@ use crate::{Entry, Summary};
 use alloc::vec::Vec;
 use core::mem::size_of;
 
+const GORILLA_ANCHOR_STRIDE: usize = 64;
+
 /// Encoding used for sealed chronology chunks.
 ///
 /// A codec owns the byte shape and decode mechanics for closed chunks. The
@@ -99,7 +101,8 @@ impl<V: Copy> ChunkCodec<V> for RawCodec {
 ///
 /// Timestamps are stored as varint-encoded delta-of-delta values. Values store
 /// the first IEEE-754 bit pattern and then use Gorilla-style XOR control bits
-/// for later values.
+/// for later values. The codec also stores periodic decoder anchors so random
+/// access only has to replay from the nearest anchor within a sealed chunk.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GorillaF64Codec;
 
@@ -109,8 +112,10 @@ pub struct GorillaF64EncodedChunk {
     first_timestamp: u64,
     first_delta: u64,
     timestamp_deltas: Vec<u8>,
+    timestamp_anchors: Vec<TimestampAnchor>,
     first_value_bits: u64,
     value_bits: Vec<u8>,
+    value_anchors: Vec<ValueAnchor>,
 }
 
 impl ChunkCodec<f64> for GorillaF64Codec {
@@ -121,30 +126,20 @@ impl ChunkCodec<f64> for GorillaF64Codec {
         debug_assert!(!timestamps.is_empty());
 
         let first_timestamp = timestamps[0];
-        let first_delta = timestamps
-            .get(1)
-            .map(|timestamp| timestamp - first_timestamp)
-            .unwrap_or(0);
-        let mut previous_delta = first_delta;
-        let mut timestamp_deltas = Vec::new();
-
-        for pair in timestamps[1..].windows(2) {
-            let delta = pair[1] - pair[0];
-            let delta_of_delta = i128::from(delta) - i128::from(previous_delta);
-            encode_var_u128(&mut timestamp_deltas, zigzag_encode(delta_of_delta));
-            previous_delta = delta;
-        }
-
+        let (first_delta, timestamp_deltas, timestamp_anchors) =
+            encode_timestamp_deltas(&timestamps);
         let first_value_bits = values[0].to_bits();
-        let value_bits = encode_value_bits(&values);
+        let (value_bits, value_anchors) = encode_value_bits(&values);
 
         GorillaF64EncodedChunk {
             len: timestamps.len(),
             first_timestamp,
             first_delta,
             timestamp_deltas,
+            timestamp_anchors,
             first_value_bits,
             value_bits,
+            value_anchors,
         }
     }
 
@@ -152,18 +147,20 @@ impl ChunkCodec<f64> for GorillaF64Codec {
         size_of::<usize>()
             + size_of::<u64>() * 3
             + encoded.timestamp_deltas.len()
+            + encoded.timestamp_anchors.len() * size_of::<TimestampAnchor>()
             + encoded.value_bits.len()
+            + encoded.value_anchors.len() * size_of::<ValueAnchor>()
     }
 
     fn entry_at_or_after(encoded: &Self::Encoded, timestamp: u64) -> Option<Entry<f64>> {
-        entry_iter(encoded)
+        entry_iter_at_or_before(encoded, timestamp)
             .find(|entry| entry.timestamp >= timestamp)
             .map(|entry| Entry::new(entry.timestamp, entry.value))
     }
 
     fn entry_at_or_before(encoded: &Self::Encoded, timestamp: u64) -> Option<Entry<f64>> {
         let mut previous = None;
-        for entry in entry_iter(encoded) {
+        for entry in entry_iter_at_or_before(encoded, timestamp) {
             if entry.timestamp > timestamp {
                 break;
             }
@@ -181,7 +178,7 @@ impl ChunkCodec<f64> for GorillaF64Codec {
         let mut summary = S::default();
         let mut len = 0;
 
-        for entry in entry_iter(encoded) {
+        for entry in entry_iter_at_or_before(encoded, start) {
             if entry.timestamp >= end {
                 break;
             }
@@ -217,14 +214,46 @@ fn lower_bound(timestamps: &[u64], timestamp: u64) -> usize {
     }
 }
 
-fn encode_value_bits(values: &[f64]) -> Vec<u8> {
+fn encode_timestamp_deltas(timestamps: &[u64]) -> (u64, Vec<u8>, Vec<TimestampAnchor>) {
+    let first_delta = timestamps
+        .get(1)
+        .map(|timestamp| timestamp - timestamps[0])
+        .unwrap_or(0);
+    let mut previous_delta = 0;
+    let mut timestamp_deltas = Vec::new();
+    let mut anchors = Vec::new();
+
+    for index in 1..timestamps.len() {
+        let delta = timestamps[index] - timestamps[index - 1];
+        if index > 1 {
+            let delta_of_delta = i128::from(delta) - i128::from(previous_delta);
+            encode_var_u128(&mut timestamp_deltas, zigzag_encode(delta_of_delta));
+        }
+        previous_delta = delta;
+
+        if index.is_multiple_of(GORILLA_ANCHOR_STRIDE) {
+            anchors.push(TimestampAnchor {
+                index,
+                timestamp: timestamps[index],
+                delta,
+                offset: timestamp_deltas.len(),
+            });
+        }
+    }
+
+    (first_delta, timestamp_deltas, anchors)
+}
+
+fn encode_value_bits(values: &[f64]) -> (Vec<u8>, Vec<ValueAnchor>) {
     let mut writer = BitWriter::new();
+    let mut anchors = Vec::new();
     let mut previous_bits = values[0].to_bits();
     let mut previous_leading = 0;
     let mut previous_trailing = 0;
     let mut has_previous_window = false;
 
-    for value in &values[1..] {
+    for (offset, value) in values[1..].iter().enumerate() {
+        let index = offset + 1;
         let value_bits = value.to_bits();
         let xor = previous_bits ^ value_bits;
         if xor == 0 {
@@ -250,9 +279,20 @@ fn encode_value_bits(values: &[f64]) -> Vec<u8> {
             }
         }
         previous_bits = value_bits;
+
+        if index.is_multiple_of(GORILLA_ANCHOR_STRIDE) {
+            anchors.push(ValueAnchor {
+                index,
+                value_bits,
+                leading: previous_leading,
+                trailing: previous_trailing,
+                bit_index: writer.bit_len(),
+                has_window: has_previous_window,
+            });
+        }
     }
 
-    writer.into_bytes()
+    (writer.into_bytes(), anchors)
 }
 
 fn significant_bits(value: u64, trailing: u32, width: u32) -> u64 {
@@ -263,16 +303,24 @@ fn significant_bits(value: u64, trailing: u32, width: u32) -> u64 {
     }
 }
 
-fn entry_iter(encoded: &GorillaF64EncodedChunk) -> EntryIter<'_> {
-    EntryIter {
-        timestamps: TimestampIter::new(encoded),
-        values: ValueIter::new(encoded),
-    }
+fn entry_iter_at_or_before(encoded: &GorillaF64EncodedChunk, timestamp: u64) -> EntryIter<'_> {
+    EntryIter::from_anchor_slot(encoded, anchor_slot_at_or_before(encoded, timestamp))
 }
 
 struct EntryIter<'a> {
     timestamps: TimestampIter<'a>,
     values: ValueIter<'a>,
+}
+
+impl<'a> EntryIter<'a> {
+    fn from_anchor_slot(encoded: &'a GorillaF64EncodedChunk, slot: Option<usize>) -> Self {
+        debug_assert_eq!(encoded.timestamp_anchors.len(), encoded.value_anchors.len());
+
+        EntryIter {
+            timestamps: TimestampIter::from_anchor(encoded, timestamp_anchor(encoded, slot)),
+            values: ValueIter::from_anchor(encoded, value_anchor(encoded, slot)),
+        }
+    }
 }
 
 impl Iterator for EntryIter<'_> {
@@ -283,22 +331,32 @@ impl Iterator for EntryIter<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct TimestampAnchor {
+    index: usize,
+    timestamp: u64,
+    delta: u64,
+    offset: usize,
+}
+
 struct TimestampIter<'a> {
     encoded: &'a GorillaF64EncodedChunk,
     index: usize,
     previous_timestamp: u64,
     previous_delta: u64,
     offset: usize,
+    pending_anchor: bool,
 }
 
 impl<'a> TimestampIter<'a> {
-    fn new(encoded: &'a GorillaF64EncodedChunk) -> Self {
+    fn from_anchor(encoded: &'a GorillaF64EncodedChunk, anchor: TimestampAnchor) -> Self {
         TimestampIter {
             encoded,
-            index: 0,
-            previous_timestamp: encoded.first_timestamp,
-            previous_delta: encoded.first_delta,
-            offset: 0,
+            index: anchor.index,
+            previous_timestamp: anchor.timestamp,
+            previous_delta: anchor.delta,
+            offset: anchor.offset,
+            pending_anchor: true,
         }
     }
 }
@@ -311,9 +369,16 @@ impl Iterator for TimestampIter<'_> {
             return None;
         }
 
+        if self.pending_anchor {
+            self.pending_anchor = false;
+            self.index += 1;
+            return Some(self.previous_timestamp);
+        }
+
         let timestamp = match self.index {
             0 => self.encoded.first_timestamp,
             1 => {
+                self.previous_delta = self.encoded.first_delta;
                 self.previous_timestamp = self
                     .encoded
                     .first_timestamp
@@ -336,6 +401,16 @@ impl Iterator for TimestampIter<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ValueAnchor {
+    index: usize,
+    value_bits: u64,
+    leading: u32,
+    trailing: u32,
+    bit_index: usize,
+    has_window: bool,
+}
+
 struct ValueIter<'a> {
     encoded: &'a GorillaF64EncodedChunk,
     index: usize,
@@ -344,18 +419,20 @@ struct ValueIter<'a> {
     leading: u32,
     trailing: u32,
     has_window: bool,
+    pending_anchor: bool,
 }
 
 impl<'a> ValueIter<'a> {
-    fn new(encoded: &'a GorillaF64EncodedChunk) -> Self {
+    fn from_anchor(encoded: &'a GorillaF64EncodedChunk, anchor: ValueAnchor) -> Self {
         ValueIter {
             encoded,
-            index: 0,
-            reader: BitReader::new(&encoded.value_bits),
-            previous_bits: encoded.first_value_bits,
-            leading: 0,
-            trailing: 0,
-            has_window: false,
+            index: anchor.index,
+            reader: BitReader::with_bit_index(&encoded.value_bits, anchor.bit_index),
+            previous_bits: anchor.value_bits,
+            leading: anchor.leading,
+            trailing: anchor.trailing,
+            has_window: anchor.has_window,
+            pending_anchor: true,
         }
     }
 }
@@ -366,6 +443,12 @@ impl Iterator for ValueIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.encoded.len {
             return None;
+        }
+
+        if self.pending_anchor {
+            self.pending_anchor = false;
+            self.index += 1;
+            return Some(f64::from_bits(self.previous_bits));
         }
 
         if self.index == 0 {
@@ -428,6 +511,10 @@ impl BitWriter {
         }
     }
 
+    fn bit_len(&self) -> usize {
+        self.bytes.len() * 8 + usize::from(self.filled)
+    }
+
     fn into_bytes(mut self) -> Vec<u8> {
         if self.filled > 0 {
             self.current <<= 8 - self.filled;
@@ -443,11 +530,8 @@ struct BitReader<'a> {
 }
 
 impl<'a> BitReader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        BitReader {
-            bytes,
-            bit_index: 0,
-        }
+    fn with_bit_index(bytes: &'a [u8], bit_index: usize) -> Self {
+        BitReader { bytes, bit_index }
     }
 
     fn read_bit(&mut self) -> Option<bool> {
@@ -500,4 +584,37 @@ fn zigzag_encode(value: i128) -> u128 {
 
 fn zigzag_decode(value: u128) -> i128 {
     ((value >> 1) as i128) ^ -((value & 1) as i128)
+}
+
+fn anchor_slot_at_or_before(encoded: &GorillaF64EncodedChunk, timestamp: u64) -> Option<usize> {
+    match encoded
+        .timestamp_anchors
+        .binary_search_by_key(&timestamp, |anchor| anchor.timestamp)
+    {
+        Ok(index) => Some(index),
+        Err(0) => None,
+        Err(index) => Some(index - 1),
+    }
+}
+
+fn timestamp_anchor(encoded: &GorillaF64EncodedChunk, slot: Option<usize>) -> TimestampAnchor {
+    slot.map(|index| encoded.timestamp_anchors[index])
+        .unwrap_or(TimestampAnchor {
+            index: 0,
+            timestamp: encoded.first_timestamp,
+            delta: 0,
+            offset: 0,
+        })
+}
+
+fn value_anchor(encoded: &GorillaF64EncodedChunk, slot: Option<usize>) -> ValueAnchor {
+    slot.map(|index| encoded.value_anchors[index])
+        .unwrap_or(ValueAnchor {
+            index: 0,
+            value_bits: encoded.first_value_bits,
+            leading: 0,
+            trailing: 0,
+            bit_index: 0,
+            has_window: false,
+        })
 }
