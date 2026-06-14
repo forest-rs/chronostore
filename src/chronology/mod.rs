@@ -5,6 +5,7 @@
 // except according to those terms.
 
 mod chunk;
+mod codec;
 mod range_summary;
 mod summary_node;
 
@@ -12,7 +13,7 @@ use crate::{Direction, Entry, Summary};
 use alloc::vec::Vec;
 use core::mem;
 
-use self::chunk::Chunk;
+use self::chunk::{ChunkRef, ClosedRawChunk, OpenChunk};
 use self::summary_node::SummaryNode;
 
 pub use self::chunk::ChunkSummary;
@@ -106,8 +107,8 @@ pub enum InsertError {
 ///            Some(Entry::new(5, 0.5)));
 /// ```
 pub struct Chronology<V: Copy, S: Summary<V>> {
-    sealed_chunks: Vec<Chunk<V, S>>,
-    open_chunk: Chunk<V, S>,
+    sealed_chunks: Vec<ClosedRawChunk<V, S>>,
+    open_chunk: OpenChunk<V, S>,
     summary_levels: Vec<Vec<SummaryNode<S>>>,
     summary: S,
     chunk_capacity: usize,
@@ -135,7 +136,7 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
         assert!(chunk_capacity > 0, "chunk capacity must be non-zero");
         Chronology {
             sealed_chunks: Vec::new(),
-            open_chunk: Chunk::with_capacity(chunk_capacity),
+            open_chunk: OpenChunk::with_capacity(chunk_capacity),
             summary_levels: Vec::new(),
             summary: S::default(),
             chunk_capacity,
@@ -174,7 +175,13 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
 
     /// Return borrowed summary metadata for a chunk.
     pub fn chunk_summary(&self, index: usize) -> Option<ChunkSummary<'_, S>> {
-        (index < self.chunk_count()).then(|| self.chunk(index).summary())
+        if index < self.sealed_chunks.len() {
+            Some(self.sealed_chunks[index].summary())
+        } else if index == self.sealed_chunks.len() && !self.open_chunk.is_empty() {
+            Some(self.open_chunk.summary())
+        } else {
+            None
+        }
     }
 
     /// Return the number of summary-pyramid levels currently populated.
@@ -232,7 +239,7 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
             }
 
             if chunk.start_timestamp() >= start && chunk.end_timestamp() < end {
-                range_summary.add_summary::<V>(chunk.len(), &chunk.summary);
+                range_summary.add_summary::<V>(chunk.len(), chunk.summary_value());
             } else {
                 chunk.add_range_summary(start, end, &mut range_summary);
             }
@@ -342,8 +349,9 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
     }
 
     fn seal_open_chunk(&mut self) {
-        let next_open_chunk = Chunk::with_capacity(self.chunk_capacity);
-        let sealed_chunk = mem::replace(&mut self.open_chunk, next_open_chunk);
+        let next_open_chunk = OpenChunk::with_capacity(self.chunk_capacity);
+        let open_chunk = mem::replace(&mut self.open_chunk, next_open_chunk);
+        let sealed_chunk = open_chunk.seal();
         let summary_node = sealed_chunk.summary_node();
         self.sealed_chunks.push(sealed_chunk);
         self.push_summary_node(0, summary_node);
@@ -400,14 +408,14 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
     fn last_timestamp(&self) -> Option<u64> {
         self.open_chunk
             .last_timestamp()
-            .or_else(|| self.sealed_chunks.last().map(Chunk::end_timestamp))
+            .or_else(|| self.sealed_chunks.last().map(ClosedRawChunk::end_timestamp))
     }
 
-    fn chunk(&self, index: usize) -> &Chunk<V, S> {
+    fn chunk(&self, index: usize) -> ChunkRef<'_, V, S> {
         if index < self.sealed_chunks.len() {
-            &self.sealed_chunks[index]
+            ChunkRef::Closed(&self.sealed_chunks[index])
         } else {
-            &self.open_chunk
+            ChunkRef::Open(&self.open_chunk)
         }
     }
 
