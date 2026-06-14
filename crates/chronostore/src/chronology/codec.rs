@@ -14,14 +14,15 @@ const GORILLA_ANCHOR_STRIDE: usize = 64;
 /// chronology still owns append order, retention, chunk summaries, and range
 /// semantics.
 pub trait ChunkCodec<V: Copy> {
-    /// Number of entries covered by one sealed-chunk summary tile.
-    ///
-    /// Codecs with periodic decoder anchors should generally use the same
-    /// stride here so summary tiles and exact-decode restart points align.
-    const SUMMARY_TILE_CAPACITY: usize;
-
     /// Encoded representation stored inside each sealed chunk.
     type Encoded;
+
+    /// Codec-owned plan used while sealing one chunk.
+    ///
+    /// The plan reports the block boundaries that chronology-side summary
+    /// tiles should align to. Codecs may store only block spans here, or may
+    /// include richer temporary segmentation state needed by [`ChunkCodec::encode`].
+    type EncodePlan: AsRef<[CodecBlock]>;
 
     /// Iterator over exact entries decoded from a sealed chunk.
     type Entries<'a>: Iterator<Item = Entry<V>>
@@ -30,10 +31,18 @@ pub trait ChunkCodec<V: Copy> {
         Self::Encoded: 'a,
         V: 'a;
 
-    /// Encode one sealed chunk.
+    /// Plan the block layout for one sealed chunk.
     ///
-    /// The provided columns have the same length and are sorted by timestamp.
-    fn encode(timestamps: Vec<u64>, values: Vec<V>) -> Self::Encoded;
+    /// The provided columns have the same non-zero length and are sorted by
+    /// timestamp. Returned blocks must be non-empty, ordered, and exactly cover
+    /// the sample index range `0..timestamps.len()`.
+    fn plan(timestamps: &[u64], values: &[V]) -> Self::EncodePlan;
+
+    /// Encode one sealed chunk using the previously computed plan.
+    ///
+    /// The provided columns have the same length and are sorted by timestamp,
+    /// and `plan` was produced by [`ChunkCodec::plan`] for those columns.
+    fn encode(timestamps: Vec<u64>, values: Vec<V>, plan: Self::EncodePlan) -> Self::Encoded;
 
     /// Return the encoded payload size, in bytes.
     ///
@@ -69,6 +78,24 @@ pub trait ChunkCodec<V: Copy> {
 
         range_summary.add_summary::<V>(len, &summary);
     }
+}
+
+/// Timestamp and index span for one codec restart block.
+///
+/// `CodecBlock` is produced by [`ChunkCodec::plan`] while sealing a chunk.
+/// Chronology uses these spans to align its cached summary tiles with the
+/// codec's restart or segment boundaries. The codec remains responsible for
+/// exact decode within each block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CodecBlock {
+    /// First sample index covered by this block.
+    pub start_index: usize,
+    /// Exclusive end sample index covered by this block.
+    pub end_index: usize,
+    /// Timestamp of the first sample in this block.
+    pub start: u64,
+    /// Timestamp of the last sample in this block.
+    pub end: u64,
 }
 
 /// Codec that stores sealed chunks as raw timestamp and value columns.
@@ -135,16 +162,25 @@ impl<V: Copy> Iterator for RawEntries<'_, V> {
 impl<V: Copy> ExactSizeIterator for RawEntries<'_, V> {}
 
 impl<V: Copy> ChunkCodec<V> for RawCodec {
-    const SUMMARY_TILE_CAPACITY: usize = 64;
-
     type Encoded = RawEncodedChunk<V>;
+
+    type EncodePlan = Vec<CodecBlock>;
 
     type Entries<'a>
         = RawEntries<'a, V>
     where
         V: 'a;
 
-    fn encode(timestamps: Vec<u64>, values: Vec<V>) -> Self::Encoded {
+    fn plan(timestamps: &[u64], values: &[V]) -> Self::EncodePlan {
+        debug_assert_eq!(
+            timestamps.len(),
+            values.len(),
+            "raw encoding requires matching timestamp and value columns"
+        );
+        fixed_codec_blocks(timestamps, 64)
+    }
+
+    fn encode(timestamps: Vec<u64>, values: Vec<V>, _plan: Self::EncodePlan) -> Self::Encoded {
         RawEncodedChunk { timestamps, values }
     }
 
@@ -266,13 +302,22 @@ impl Iterator for GorillaF64Entries<'_> {
 }
 
 impl ChunkCodec<f64> for GorillaF64Codec {
-    const SUMMARY_TILE_CAPACITY: usize = GORILLA_ANCHOR_STRIDE;
-
     type Encoded = GorillaF64EncodedChunk;
+
+    type EncodePlan = Vec<CodecBlock>;
 
     type Entries<'a> = GorillaF64Entries<'a>;
 
-    fn encode(timestamps: Vec<u64>, values: Vec<f64>) -> Self::Encoded {
+    fn plan(timestamps: &[u64], values: &[f64]) -> Self::EncodePlan {
+        debug_assert_eq!(
+            timestamps.len(),
+            values.len(),
+            "Gorilla planning requires matching timestamp and value columns"
+        );
+        fixed_codec_blocks(timestamps, GORILLA_ANCHOR_STRIDE)
+    }
+
+    fn encode(timestamps: Vec<u64>, values: Vec<f64>, _plan: Self::EncodePlan) -> Self::Encoded {
         debug_assert_eq!(
             timestamps.len(),
             values.len(),
@@ -352,6 +397,34 @@ fn lower_bound(timestamps: &[u64], timestamp: u64) -> usize {
     match timestamps.binary_search(&timestamp) {
         Ok(index) | Err(index) => index,
     }
+}
+
+fn fixed_codec_blocks(timestamps: &[u64], block_capacity: usize) -> Vec<CodecBlock> {
+    debug_assert!(
+        !timestamps.is_empty(),
+        "codec block planning requires at least one timestamp"
+    );
+    debug_assert!(block_capacity > 0, "codec block capacity must be non-zero");
+
+    let block_capacity = block_capacity.max(1);
+    let block_count = timestamps.len().div_ceil(block_capacity);
+    let mut blocks = Vec::with_capacity(block_count);
+    let mut start_index = 0;
+
+    while start_index < timestamps.len() {
+        let end_index = start_index
+            .saturating_add(block_capacity)
+            .min(timestamps.len());
+        blocks.push(CodecBlock {
+            start_index,
+            end_index,
+            start: timestamps[start_index],
+            end: timestamps[end_index - 1],
+        });
+        start_index = end_index;
+    }
+
+    blocks
 }
 
 fn encode_timestamp_deltas(timestamps: &[u64]) -> (u64, Vec<u8>, Vec<TimestampAnchor>) {

@@ -589,3 +589,36 @@ fn gorilla_f64_codec_matches_raw_queries_after_decoder_anchors() {
         gorilla.entries_in_range(start, end).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn codecs_report_summary_block_layouts() {
+    let timestamps = (0..130).map(|index| index * 16).collect::<Vec<_>>();
+    let values = (0..130).map(f64::from).collect::<Vec<_>>();
+
+    let expected = vec![
+        CodecBlock {
+            start_index: 0,
+            end_index: 64,
+            start: 0,
+            end: 1_008,
+        },
+        CodecBlock {
+            start_index: 64,
+            end_index: 128,
+            start: 1_024,
+            end: 2_032,
+        },
+        CodecBlock {
+            start_index: 128,
+            end_index: 130,
+            start: 2_048,
+            end: 2_064,
+        },
+    ];
+
+    let raw_blocks = <RawCodec as ChunkCodec<f64>>::plan(&timestamps, &values);
+    let gorilla_blocks = <GorillaF64Codec as ChunkCodec<f64>>::plan(&timestamps, &values);
+
+    assert_eq!(raw_blocks, expected);
+    assert_eq!(gorilla_blocks, expected);
+}

@@ -16,7 +16,7 @@ use self::summary_node::SummaryNode;
 
 pub use self::chunk::ChunkSummary;
 pub use self::codec::{
-    ChunkCodec, GorillaF64Codec, GorillaF64EncodedChunk, GorillaF64Entries, RawCodec,
+    ChunkCodec, CodecBlock, GorillaF64Codec, GorillaF64EncodedChunk, GorillaF64Entries, RawCodec,
     RawEncodedChunk, RawEntries,
 };
 pub use self::range_summary::RangeSummary;

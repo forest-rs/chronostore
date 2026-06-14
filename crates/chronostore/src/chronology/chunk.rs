@@ -1,7 +1,7 @@
 // Copyright 2026 the Chronostore Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use super::codec::ChunkCodec;
+use super::codec::{ChunkCodec, CodecBlock};
 use super::{RangeSummary, SummaryNode};
 use crate::{Entry, Summary};
 use alloc::vec::Vec;
@@ -110,9 +110,10 @@ impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
         let start = self.timestamps[0];
         let end = self.timestamps[self.timestamps.len() - 1];
         let len = self.timestamps.len();
+        let encode_plan = C::plan(&self.timestamps, &self.values);
         let summary_tiles =
-            build_summary_tiles::<V, S>(&self.timestamps, &self.values, C::SUMMARY_TILE_CAPACITY);
-        let encoded = C::encode(self.timestamps, self.values);
+            build_summary_tiles::<V, S>(&self.timestamps, &self.values, encode_plan.as_ref());
+        let encoded = C::encode(self.timestamps, self.values, encode_plan);
 
         ClosedChunk {
             start,
@@ -347,7 +348,7 @@ where
 fn build_summary_tiles<V, S>(
     timestamps: &[u64],
     values: &[V],
-    tile_capacity: usize,
+    blocks: &[CodecBlock],
 ) -> Vec<SummaryNode<S>>
 where
     V: Copy,
@@ -358,32 +359,57 @@ where
         values.len(),
         "summary tiles require matching timestamp and value columns"
     );
-    debug_assert!(tile_capacity > 0, "summary tile capacity must be non-zero");
+    debug_assert!(
+        !blocks.is_empty(),
+        "summary tiles require at least one codec block"
+    );
 
-    let tile_capacity = tile_capacity.max(1);
-    let tile_count = timestamps.len().div_ceil(tile_capacity);
-    let mut tiles = Vec::with_capacity(tile_count);
-    let mut start_index = 0;
+    let mut tiles = Vec::with_capacity(blocks.len());
+    let mut expected_start_index = 0;
 
-    while start_index < timestamps.len() {
-        let end_index = start_index
-            .saturating_add(tile_capacity)
-            .min(timestamps.len());
+    for block in blocks {
+        debug_assert_eq!(
+            block.start_index, expected_start_index,
+            "codec blocks must exactly cover the chunk in order"
+        );
+        debug_assert!(
+            block.end_index > block.start_index,
+            "codec blocks must be non-empty"
+        );
+        debug_assert!(
+            block.end_index <= timestamps.len(),
+            "codec blocks must stay inside the chunk"
+        );
+        debug_assert_eq!(
+            block.start, timestamps[block.start_index],
+            "codec block start timestamp must match its first sample"
+        );
+        debug_assert_eq!(
+            block.end,
+            timestamps[block.end_index - 1],
+            "codec block end timestamp must match its last sample"
+        );
+
         let mut summary = S::default();
 
-        for index in start_index..end_index {
+        for index in block.start_index..block.end_index {
             summary.update(&Entry::new(timestamps[index], values[index]));
         }
 
         tiles.push(SummaryNode {
-            start: timestamps[start_index],
-            end: timestamps[end_index - 1],
-            len: end_index - start_index,
+            start: block.start,
+            end: block.end,
+            len: block.end_index - block.start_index,
             summary,
         });
 
-        start_index = end_index;
+        expected_start_index = block.end_index;
     }
+    debug_assert_eq!(
+        expected_start_index,
+        timestamps.len(),
+        "codec blocks must cover every sample"
+    );
 
     tiles
 }

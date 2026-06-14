@@ -109,7 +109,7 @@ mod summary;
 mod tests;
 
 pub use self::chronology::{
-    Chronology, ChunkCodec, ChunkSummary, DEFAULT_CHUNK_CAPACITY, GorillaF64Chronology,
+    Chronology, ChunkCodec, ChunkSummary, CodecBlock, DEFAULT_CHUNK_CAPACITY, GorillaF64Chronology,
     GorillaF64Codec, GorillaF64EncodedChunk, GorillaF64Entries, InsertError, RangeSummary,
     RawCodec, RawEncodedChunk, RawEntries, RetentionPolicy, SUMMARY_FANOUT,
 };
