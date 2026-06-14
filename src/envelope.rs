@@ -9,8 +9,7 @@ use crate::{RangeSummary, SimpleSummary, StatsSummary};
 /// A summary that can expose minimum and maximum values for graph envelopes.
 ///
 /// Implement this for summary types that should work with
-/// [`Chronology::range_envelope`](crate::Chronology::range_envelope) and
-/// [`Chronology::visit_range_envelope`](crate::Chronology::visit_range_envelope).
+/// [`Chronology::range_envelope`](crate::Chronology::range_envelope).
 /// Chronostore implements it for [`SimpleSummary`] and [`StatsSummary`].
 pub trait EnvelopeSummary<V: Copy> {
     /// Return the minimum value represented by this summary.
@@ -23,8 +22,7 @@ pub trait EnvelopeSummary<V: Copy> {
 /// A min/max bucket for rendering a range envelope.
 ///
 /// `EnvelopeBucket` is returned by
-/// [`Chronology::range_envelope`](crate::Chronology::range_envelope) and
-/// visited by [`Chronology::visit_range_envelope`](crate::Chronology::visit_range_envelope).
+/// the iterator from [`Chronology::range_envelope`](crate::Chronology::range_envelope).
 /// Each bucket covers `start..end` and represents `len` samples. Empty buckets
 /// have `len == 0` and no min/max values.
 ///
@@ -36,7 +34,7 @@ pub trait EnvelopeSummary<V: Copy> {
 ///     .insert_values(&[Entry::new(0, 4), Entry::new(1, 9), Entry::new(2, 5)])
 ///     .expect("timestamps are monotonic");
 ///
-/// let buckets = series.range_envelope(0, 3, 1);
+/// let buckets = series.range_envelope(0, 3, 1).collect::<Vec<_>>();
 /// assert_eq!(buckets[0].min, Some(4));
 /// assert_eq!(buckets[0].max, Some(9));
 /// ```

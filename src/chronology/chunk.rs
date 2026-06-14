@@ -35,6 +35,49 @@ pub(super) struct OpenChunk<V: Copy, S: Summary<V>> {
     pub(super) summary: S,
 }
 
+pub(super) struct OpenEntries<'a, V: Copy> {
+    timestamps: &'a [u64],
+    values: &'a [V],
+    index: usize,
+    end: usize,
+}
+
+impl<'a, V: Copy> OpenEntries<'a, V> {
+    fn new<S>(chunk: &'a OpenChunk<V, S>, start: u64, end: u64) -> Self
+    where
+        S: Summary<V>,
+    {
+        let range = chunk.range_indices(start, end);
+        OpenEntries {
+            timestamps: &chunk.timestamps,
+            values: &chunk.values,
+            index: range.start,
+            end: range.end,
+        }
+    }
+}
+
+impl<V: Copy> Iterator for OpenEntries<'_, V> {
+    type Item = Entry<V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.end {
+            return None;
+        }
+
+        let entry = Entry::new(self.timestamps[self.index], self.values[self.index]);
+        self.index += 1;
+        Some(entry)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.end - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<V: Copy> ExactSizeIterator for OpenEntries<'_, V> {}
+
 impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
     pub(super) fn with_capacity(capacity: usize) -> Self {
         OpenChunk {
@@ -149,13 +192,8 @@ impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
         range_summary.add_summary::<V>(len, &summary);
     }
 
-    pub(super) fn visit_range_entries<F>(&self, start: u64, end: u64, visit: &mut F)
-    where
-        F: FnMut(Entry<V>),
-    {
-        for index in self.range_indices(start, end) {
-            visit(self.entry(index));
-        }
+    pub(super) fn entries(&self, start: u64, end: u64) -> OpenEntries<'_, V> {
+        OpenEntries::new(self, start, end)
     }
 
     pub(super) fn entry(&self, index: usize) -> Entry<V> {
@@ -227,11 +265,8 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> ClosedChunk<V, S, C> {
         C::entry_at_or_before(&self.encoded, timestamp)
     }
 
-    pub(super) fn visit_range_entries<F>(&self, start: u64, end: u64, visit: &mut F)
-    where
-        F: FnMut(Entry<V>),
-    {
-        C::visit_range_entries(&self.encoded, start, end, visit);
+    pub(super) fn entries(&self, start: u64, end: u64) -> C::Entries<'_> {
+        C::entries(&self.encoded, start, end)
     }
 
     pub(super) fn add_range_summary(
@@ -275,6 +310,37 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> ClosedChunk<V, S, C> {
         }
 
         (left < self.summary_tiles.len()).then_some(left)
+    }
+}
+
+pub(super) enum ChunkEntries<'a, V, C>
+where
+    V: Copy + 'a,
+    C: ChunkCodec<V> + 'a,
+{
+    Closed(C::Entries<'a>),
+    Open(OpenEntries<'a, V>),
+}
+
+impl<V, C> Iterator for ChunkEntries<'_, V, C>
+where
+    V: Copy,
+    C: ChunkCodec<V>,
+{
+    type Item = Entry<V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            ChunkEntries::Closed(entries) => entries.next(),
+            ChunkEntries::Open(entries) => entries.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            ChunkEntries::Closed(entries) => entries.size_hint(),
+            ChunkEntries::Open(entries) => entries.size_hint(),
+        }
     }
 }
 
@@ -372,13 +438,10 @@ impl<'a, V: Copy, S: Summary<V>, C: ChunkCodec<V>> ChunkRef<'a, V, S, C> {
         }
     }
 
-    pub(super) fn visit_range_entries<F>(&self, start: u64, end: u64, visit: &mut F)
-    where
-        F: FnMut(Entry<V>),
-    {
+    pub(super) fn entries(&self, start: u64, end: u64) -> ChunkEntries<'a, V, C> {
         match self {
-            ChunkRef::Closed(chunk) => chunk.visit_range_entries(start, end, visit),
-            ChunkRef::Open(chunk) => chunk.visit_range_entries(start, end, visit),
+            ChunkRef::Closed(chunk) => ChunkEntries::Closed(chunk.entries(start, end)),
+            ChunkRef::Open(chunk) => ChunkEntries::Open(chunk.entries(start, end)),
         }
     }
 

@@ -82,12 +82,17 @@
 //!     ])
 //!     .expect("timestamps are monotonic");
 //!
-//! let envelope = series.range_envelope(0, 4, 2);
+//! let envelope = series.range_envelope(0, 4, 2).collect::<Vec<_>>();
 //! assert_eq!(envelope.len(), 2);
 //! assert_eq!(envelope[0].max, Some(8.0));
 //!
-//! let visible_entries = series.entries_in_range(0, 4);
-//! let line = lttb(&visible_entries, 3, |value| value);
+//! let mut visible_entries = Vec::new();
+//! visible_entries.extend(series.entries_in_range(0, 4));
+//!
+//! let mut line = Vec::new();
+//! for entry in lttb(&visible_entries, 3, |value| value) {
+//!     line.push(entry);
+//! }
 //! assert_eq!(line.len(), 3);
 //! ```
 

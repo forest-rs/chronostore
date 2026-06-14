@@ -8,9 +8,9 @@ use crate::Summary;
 
 /// Owned summary metadata for a timestamp range.
 ///
-/// `RangeSummary` is returned by [`Chronology::range_summary`](crate::Chronology::range_summary)
-/// and [`Chronology::summarize_range`](crate::Chronology::summarize_range), and
-/// is visited by [`Chronology::visit_range_summaries`](crate::Chronology::visit_range_summaries).
+/// `RangeSummary` is returned by
+/// [`Chronology::range_summary`](crate::Chronology::range_summary) and by the
+/// iterator from [`Chronology::bucketed_summaries`](crate::Chronology::bucketed_summaries).
 /// The `summary` field is the caller-selected [`Summary`] implementation for
 /// the entries whose timestamps fall inside `start..end`.
 #[derive(Clone)]

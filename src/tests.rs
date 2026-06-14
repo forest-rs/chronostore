@@ -196,7 +196,7 @@ fn summarizes_half_open_timestamp_ranges() {
 }
 
 #[test]
-fn summarizes_viewport_buckets() {
+fn summarizes_bucketed_ranges() {
     let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity(2);
     let entries = (0..16)
         .map(|value| Entry::new(value, value))
@@ -205,7 +205,7 @@ fn summarizes_viewport_buckets() {
         .insert_values(&entries)
         .expect("timestamps are monotonic");
 
-    let summaries = chronology.summarize_range(0, 16, 4);
+    let summaries = chronology.bucketed_summaries(0, 16, 4).collect::<Vec<_>>();
     assert_eq!(summaries.len(), 4);
     assert_eq!(summaries[0].len, 4);
     assert_eq!(summaries[0].summary.min, Some(0));
@@ -214,16 +214,18 @@ fn summarizes_viewport_buckets() {
     assert_eq!(summaries[3].summary.min, Some(12));
     assert_eq!(summaries[3].summary.max, Some(15));
 
-    let mut visited = Vec::new();
-    chronology.visit_range_summaries(0, 16, 4, |summary| {
-        visited.push((
-            summary.start,
-            summary.end,
-            summary.len,
-            summary.summary.min,
-            summary.summary.max,
-        ));
-    });
+    let visited = chronology
+        .bucketed_summaries(0, 16, 4)
+        .map(|summary| {
+            (
+                summary.start,
+                summary.end,
+                summary.len,
+                summary.summary.min,
+                summary.summary.max,
+            )
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         visited,
         vec![
@@ -250,7 +252,7 @@ fn builds_min_max_range_envelopes() {
         .insert_values(&entries)
         .expect("timestamps are monotonic");
 
-    let envelope = chronology.range_envelope(0, 6, 3);
+    let envelope = chronology.range_envelope(0, 6, 3).collect::<Vec<_>>();
     assert_eq!(
         envelope,
         vec![
@@ -278,8 +280,7 @@ fn builds_min_max_range_envelopes() {
         ]
     );
 
-    let mut visited = Vec::new();
-    chronology.visit_range_envelope(0, 6, 3, |bucket| visited.push(bucket));
+    let visited = chronology.range_envelope(0, 6, 3).collect::<Vec<_>>();
     assert_eq!(visited, envelope);
 }
 
@@ -287,13 +288,22 @@ fn builds_min_max_range_envelopes() {
 fn lttb_handles_small_targets() {
     let entries = [Entry::new(0, 0.0), Entry::new(1, 2.0), Entry::new(2, 4.0)];
 
-    assert_eq!(lttb(&entries, 0, |value| value), Vec::new());
-    assert_eq!(lttb(&entries, 1, |value| value), vec![Entry::new(0, 0.0)]);
     assert_eq!(
-        lttb(&entries, 2, |value| value),
+        lttb(&entries, 0, |value| value).collect::<Vec<_>>(),
+        Vec::new()
+    );
+    assert_eq!(
+        lttb(&entries, 1, |value| value).collect::<Vec<_>>(),
+        vec![Entry::new(0, 0.0)]
+    );
+    assert_eq!(
+        lttb(&entries, 2, |value| value).collect::<Vec<_>>(),
         vec![Entry::new(0, 0.0), Entry::new(2, 4.0)]
     );
-    assert_eq!(lttb(&entries, 4, |value| value), entries.to_vec());
+    assert_eq!(
+        lttb(&entries, 4, |value| value).collect::<Vec<_>>(),
+        entries.to_vec()
+    );
 }
 
 #[test]
@@ -306,7 +316,7 @@ fn lttb_preserves_first_last_and_spikes() {
         Entry::new(4, 0.0),
     ];
 
-    let sampled = lttb(&entries, 3, |value| value);
+    let sampled = lttb(&entries, 3, |value| value).collect::<Vec<_>>();
     assert_eq!(
         sampled,
         vec![Entry::new(0, 0.0), Entry::new(2, 10.0), Entry::new(4, 0.0),]
@@ -324,7 +334,7 @@ fn returns_exact_entries_in_half_open_ranges() {
         .expect("timestamps are monotonic");
 
     assert_eq!(
-        chronology.entries_in_range(10, 61),
+        chronology.entries_in_range(10, 61).collect::<Vec<_>>(),
         vec![
             Entry::new(10, 1),
             Entry::new(20, 2),
@@ -334,10 +344,12 @@ fn returns_exact_entries_in_half_open_ranges() {
             Entry::new(60, 6),
         ]
     );
-    assert_eq!(chronology.entries_in_range(60, 60), Vec::new());
+    assert_eq!(
+        chronology.entries_in_range(60, 60).collect::<Vec<_>>(),
+        Vec::new()
+    );
 
-    let mut visited = Vec::new();
-    chronology.visit_range_entries(65, 100, |entry| visited.push(entry));
+    let visited = chronology.entries_in_range(65, 100).collect::<Vec<_>>();
     assert_eq!(visited, vec![Entry::new(70, 7)]);
 }
 
@@ -382,7 +394,7 @@ fn retention_keeps_sealed_chunks_inside_time_window() {
     assert_eq!(chronology.len(), 4);
     assert_eq!(chronology.sealed_chunk_count(), 2);
     assert_eq!(
-        chronology.entries_in_range(0, 10),
+        chronology.entries_in_range(0, 10).collect::<Vec<_>>(),
         vec![
             Entry::new(6, 6),
             Entry::new(7, 7),
@@ -411,7 +423,7 @@ fn time_window_retention_uses_sealed_chunk_granularity() {
     assert_eq!(chronology.sealed_chunk_count(), 1);
     assert_eq!(chronology.chunk_count(), 2);
     assert_eq!(
-        chronology.entries_in_range(0, 6),
+        chronology.entries_in_range(0, 6).collect::<Vec<_>>(),
         vec![
             Entry::new(0, 0),
             Entry::new(1, 1),
@@ -439,7 +451,7 @@ fn retention_policies_can_combine_time_and_chunk_limits() {
     assert_eq!(chronology.len(), 4);
     assert_eq!(chronology.sealed_chunk_count(), 2);
     assert_eq!(
-        chronology.entries_in_range(0, 10),
+        chronology.entries_in_range(0, 10).collect::<Vec<_>>(),
         vec![
             Entry::new(6, 6),
             Entry::new(7, 7),
@@ -521,8 +533,8 @@ fn gorilla_f64_codec_matches_raw_queries() {
     assert_eq!(raw_summary.summary.min, gorilla_summary.summary.min);
     assert_eq!(raw_summary.summary.max, gorilla_summary.summary.max);
 
-    let raw_buckets = raw.summarize_range(0, 161, 5);
-    let gorilla_buckets = gorilla.summarize_range(0, 161, 5);
+    let raw_buckets = raw.bucketed_summaries(0, 161, 5).collect::<Vec<_>>();
+    let gorilla_buckets = gorilla.bucketed_summaries(0, 161, 5).collect::<Vec<_>>();
     assert_eq!(raw_buckets.len(), gorilla_buckets.len());
     for (raw_bucket, gorilla_bucket) in raw_buckets.iter().zip(gorilla_buckets.iter()) {
         assert_eq!(raw_bucket.len, gorilla_bucket.len);
@@ -576,7 +588,7 @@ fn gorilla_f64_codec_matches_raw_queries_after_decoder_anchors() {
     assert_eq!(raw_summary.summary.max, gorilla_summary.summary.max);
 
     assert_eq!(
-        raw.entries_in_range(start, end),
-        gorilla.entries_in_range(start, end)
+        raw.entries_in_range(start, end).collect::<Vec<_>>(),
+        gorilla.entries_in_range(start, end).collect::<Vec<_>>()
     );
 }

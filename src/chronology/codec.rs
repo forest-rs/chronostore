@@ -26,6 +26,13 @@ pub trait ChunkCodec<V: Copy> {
     /// Encoded representation stored inside each sealed chunk.
     type Encoded;
 
+    /// Iterator over exact entries decoded from a sealed chunk.
+    type Entries<'a>: Iterator<Item = Entry<V>>
+    where
+        Self: 'a,
+        Self::Encoded: 'a,
+        V: 'a;
+
     /// Encode one sealed chunk.
     ///
     /// The provided columns have the same length and are sorted by timestamp.
@@ -43,18 +50,28 @@ pub trait ChunkCodec<V: Copy> {
     /// Return the last entry at or before `timestamp`.
     fn entry_at_or_before(encoded: &Self::Encoded, timestamp: u64) -> Option<Entry<V>>;
 
-    /// Visit every entry whose timestamp is in `start..end`.
-    fn visit_range_entries<F>(encoded: &Self::Encoded, start: u64, end: u64, visit: &mut F)
-    where
-        F: FnMut(Entry<V>);
+    /// Return exact entries whose timestamps are in `start..end`.
+    fn entries<'a>(encoded: &'a Self::Encoded, start: u64, end: u64) -> Self::Entries<'a>;
 
     /// Add the entries in `start..end` to `range_summary`.
-    fn add_range_summary<S: Summary<V>>(
+    fn add_range_summary<S>(
         encoded: &Self::Encoded,
         start: u64,
         end: u64,
         range_summary: &mut RangeSummary<S>,
-    );
+    ) where
+        S: Summary<V>,
+    {
+        let mut summary = S::default();
+        let mut len = 0;
+
+        for entry in Self::entries(encoded, start, end) {
+            summary.update(&entry);
+            len += 1;
+        }
+
+        range_summary.add_summary::<V>(len, &summary);
+    }
 }
 
 /// Codec that stores sealed chunks as raw timestamp and value columns.
@@ -76,10 +93,57 @@ pub struct RawEncodedChunk<V: Copy> {
     values: Vec<V>,
 }
 
+/// Iterator over exact entries stored by [`RawCodec`].
+pub struct RawEntries<'a, V: Copy> {
+    timestamps: &'a [u64],
+    values: &'a [V],
+    index: usize,
+    end: usize,
+}
+
+impl<'a, V: Copy> RawEntries<'a, V> {
+    fn new(encoded: &'a RawEncodedChunk<V>, start: u64, end: u64) -> Self {
+        let start_index = lower_bound(&encoded.timestamps, start);
+        let end_index = lower_bound(&encoded.timestamps, end);
+        RawEntries {
+            timestamps: &encoded.timestamps,
+            values: &encoded.values,
+            index: start_index,
+            end: end_index,
+        }
+    }
+}
+
+impl<V: Copy> Iterator for RawEntries<'_, V> {
+    type Item = Entry<V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.end {
+            return None;
+        }
+
+        let entry = Entry::new(self.timestamps[self.index], self.values[self.index]);
+        self.index += 1;
+        Some(entry)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.end - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<V: Copy> ExactSizeIterator for RawEntries<'_, V> {}
+
 impl<V: Copy> ChunkCodec<V> for RawCodec {
     const SUMMARY_TILE_CAPACITY: usize = 64;
 
     type Encoded = RawEncodedChunk<V>;
+
+    type Entries<'a>
+        = RawEntries<'a, V>
+    where
+        V: 'a;
 
     fn encode(timestamps: Vec<u64>, values: Vec<V>) -> Self::Encoded {
         RawEncodedChunk { timestamps, values }
@@ -99,33 +163,8 @@ impl<V: Copy> ChunkCodec<V> for RawCodec {
         Some(entry(encoded, index))
     }
 
-    fn visit_range_entries<F>(encoded: &Self::Encoded, start: u64, end: u64, visit: &mut F)
-    where
-        F: FnMut(Entry<V>),
-    {
-        let start_index = lower_bound(&encoded.timestamps, start);
-        let end_index = lower_bound(&encoded.timestamps, end);
-
-        for index in start_index..end_index {
-            visit(entry(encoded, index));
-        }
-    }
-
-    fn add_range_summary<S: Summary<V>>(
-        encoded: &Self::Encoded,
-        start: u64,
-        end: u64,
-        range_summary: &mut RangeSummary<S>,
-    ) {
-        let start_index = lower_bound(&encoded.timestamps, start);
-        let end_index = lower_bound(&encoded.timestamps, end);
-        if start_index == end_index {
-            return;
-        }
-
-        let mut summary = S::default();
-        Self::visit_range_entries(encoded, start, end, &mut |entry| summary.update(&entry));
-        range_summary.add_summary::<V>(end_index - start_index, &summary);
+    fn entries<'a>(encoded: &'a Self::Encoded, start: u64, end: u64) -> Self::Entries<'a> {
+        RawEntries::new(encoded, start, end)
     }
 }
 
@@ -174,10 +213,54 @@ pub struct GorillaF64EncodedChunk {
     value_anchors: Vec<ValueAnchor>,
 }
 
+/// Iterator over exact entries decoded by [`GorillaF64Codec`].
+pub struct GorillaF64Entries<'a> {
+    inner: EntryIter<'a>,
+    start: u64,
+    end: u64,
+    done: bool,
+}
+
+impl<'a> GorillaF64Entries<'a> {
+    fn new(encoded: &'a GorillaF64EncodedChunk, start: u64, end: u64) -> Self {
+        GorillaF64Entries {
+            inner: entry_iter_at_or_before(encoded, start),
+            start,
+            end,
+            done: start >= end,
+        }
+    }
+}
+
+impl Iterator for GorillaF64Entries<'_> {
+    type Item = Entry<f64>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        for entry in self.inner.by_ref() {
+            if entry.timestamp >= self.end {
+                self.done = true;
+                return None;
+            }
+            if entry.timestamp >= self.start {
+                return Some(entry);
+            }
+        }
+
+        self.done = true;
+        None
+    }
+}
+
 impl ChunkCodec<f64> for GorillaF64Codec {
     const SUMMARY_TILE_CAPACITY: usize = GORILLA_ANCHOR_STRIDE;
 
     type Encoded = GorillaF64EncodedChunk;
+
+    type Entries<'a> = GorillaF64Entries<'a>;
 
     fn encode(timestamps: Vec<u64>, values: Vec<f64>) -> Self::Encoded {
         debug_assert_eq!(timestamps.len(), values.len());
@@ -227,35 +310,8 @@ impl ChunkCodec<f64> for GorillaF64Codec {
         previous
     }
 
-    fn visit_range_entries<F>(encoded: &Self::Encoded, start: u64, end: u64, visit: &mut F)
-    where
-        F: FnMut(Entry<f64>),
-    {
-        for entry in entry_iter_at_or_before(encoded, start) {
-            if entry.timestamp >= end {
-                break;
-            }
-            if entry.timestamp >= start {
-                visit(entry);
-            }
-        }
-    }
-
-    fn add_range_summary<S: Summary<f64>>(
-        encoded: &Self::Encoded,
-        start: u64,
-        end: u64,
-        range_summary: &mut RangeSummary<S>,
-    ) {
-        let mut summary = S::default();
-        let mut len = 0;
-
-        Self::visit_range_entries(encoded, start, end, &mut |entry| {
-            summary.update(&entry);
-            len += 1;
-        });
-
-        range_summary.add_summary::<f64>(len, &summary);
+    fn entries<'a>(encoded: &'a Self::Encoded, start: u64, end: u64) -> Self::Entries<'a> {
+        GorillaF64Entries::new(encoded, start, end)
     }
 }
 

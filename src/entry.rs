@@ -12,8 +12,7 @@
 /// [`Chronology::insert_values`](crate::Chronology::insert_values), and receive
 /// entries from exact queries such as
 /// [`Chronology::find_nearest_value`](crate::Chronology::find_nearest_value),
-/// [`Chronology::entries_in_range`](crate::Chronology::entries_in_range), and
-/// [`Chronology::visit_range_entries`](crate::Chronology::visit_range_entries).
+/// and [`Chronology::entries_in_range`](crate::Chronology::entries_in_range).
 ///
 /// ```
 /// use chronostore::Entry;

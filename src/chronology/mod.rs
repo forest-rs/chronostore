@@ -14,7 +14,7 @@ use crate::{Direction, Entry, EnvelopeBucket, EnvelopeSummary, Summary};
 use alloc::vec::Vec;
 use core::mem;
 
-use self::chunk::{ChunkRef, ClosedChunk, OpenChunk};
+use self::chunk::{ChunkEntries, ChunkRef, ClosedChunk, OpenChunk};
 use self::summary_node::SummaryNode;
 
 pub use self::chunk::ChunkSummary;
@@ -298,11 +298,11 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
         range_summary
     }
 
-    /// Visit exact entries whose timestamps are in `start..end`.
+    /// Return exact entries whose timestamps are in `start..end`.
     ///
-    /// The range is half-open: `start` is included and `end` is excluded. This
-    /// method does not allocate and is intended for callers that need exact
-    /// samples for inspection, export, or display algorithms such as LTTB.
+    /// The range is half-open: `start` is included and `end` is excluded. The
+    /// returned iterator does not allocate. Callers that want a reusable buffer
+    /// can use `buffer.clear(); buffer.extend(chronology.entries_in_range(...))`.
     ///
     /// ```
     /// use chronostore::{Chronology, Entry, NullSummary};
@@ -314,41 +314,11 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     ///       .expect("timestamps are monotonic");
     ///
     /// let mut values = Vec::new();
-    /// chrono.visit_range_entries(1, 10, |entry| values.push(entry.value));
+    /// values.extend(chrono.entries_in_range(1, 10).map(|entry| entry.value));
     /// assert_eq!(values, vec![20, 30]);
     /// ```
-    pub fn visit_range_entries<F>(&self, start: u64, end: u64, mut visit: F)
-    where
-        F: FnMut(Entry<V>),
-    {
-        if start >= end {
-            return;
-        }
-
-        let Some(mut chunk_index) = self.first_chunk_with_end_at_least(start) else {
-            return;
-        };
-
-        while chunk_index < self.chunk_count() {
-            let chunk = self.chunk(chunk_index);
-            if chunk.start_timestamp() >= end {
-                break;
-            }
-
-            chunk.visit_range_entries(start, end, &mut visit);
-            chunk_index += 1;
-        }
-    }
-
-    /// Return exact entries whose timestamps are in `start..end`.
-    ///
-    /// The range is half-open: `start` is included and `end` is excluded. Use
-    /// [`Chronology::visit_range_entries`] when the caller can consume entries
-    /// without allocating.
-    pub fn entries_in_range(&self, start: u64, end: u64) -> Vec<Entry<V>> {
-        let mut entries = Vec::new();
-        self.visit_range_entries(start, end, |entry| entries.push(entry));
-        entries
+    pub fn entries_in_range(&self, start: u64, end: u64) -> impl Iterator<Item = Entry<V>> + '_ {
+        EntriesInRange::new(self, start, end)
     }
 
     /// Return bucketed summaries for a range query.
@@ -370,69 +340,21 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     ///     .insert_values(&[Entry::new(0, 4), Entry::new(1, 9), Entry::new(2, 5)])
     ///     .expect("timestamps are monotonic");
     ///
-    /// let buckets = series.summarize_range(0, 3, 2);
+    /// let buckets = series.bucketed_summaries(0, 3, 2).collect::<Vec<_>>();
     /// assert_eq!(buckets.len(), 2);
     /// assert_eq!(buckets[0].summary.max, Some(4));
     /// ```
-    pub fn summarize_range(
+    pub fn bucketed_summaries(
         &self,
         start: u64,
         end: u64,
         target_buckets: usize,
-    ) -> Vec<RangeSummary<S>> {
-        let bucket_count = bucket_count(start, end, target_buckets);
-        let mut summaries = Vec::with_capacity(bucket_count);
-        self.visit_range_summaries(start, end, target_buckets, |summary| {
-            summaries.push(summary);
-        });
-        summaries
-    }
-
-    /// Visit bucketed summaries for a range query.
-    ///
-    /// This is the no-allocation form of [`Chronology::summarize_range`]. The
-    /// range is half-open: `start` is included and `end` is excluded.
-    ///
-    /// ```
-    /// use chronostore::{Chronology, Entry, StatsSummary};
-    ///
-    /// let mut series = Chronology::<u64, StatsSummary<u64>>::new();
-    /// series
-    ///     .insert_values(&[Entry::new(0, 4), Entry::new(1, 9), Entry::new(2, 5)])
-    ///     .expect("timestamps are monotonic");
-    ///
-    /// let mut bucket_lengths = Vec::new();
-    /// series.visit_range_summaries(0, 3, 2, |summary| {
-    ///     bucket_lengths.push(summary.len);
-    /// });
-    /// assert_eq!(bucket_lengths, vec![1, 2]);
-    /// ```
-    pub fn visit_range_summaries<F>(
-        &self,
-        start: u64,
-        end: u64,
-        target_buckets: usize,
-        mut visit: F,
-    ) where
-        F: FnMut(RangeSummary<S>),
-    {
-        let bucket_count = bucket_count(start, end, target_buckets);
-        if bucket_count == 0 {
-            return;
-        }
-
-        let span = end - start;
-
-        for bucket in 0..bucket_count {
-            let bucket_start = bucket_boundary(start, span, bucket, bucket_count);
-            let bucket_end = bucket_boundary(start, span, bucket + 1, bucket_count);
-            visit(self.range_summary(bucket_start, bucket_end));
-        }
+    ) -> impl Iterator<Item = RangeSummary<S>> + '_ {
+        BucketedSummaries::new(self, start, end, target_buckets)
     }
 
     /// Return min/max envelope buckets for a range query.
     ///
-    /// This is an allocating convenience over [`Chronology::visit_range_envelope`].
     /// Envelope buckets are useful for profiler and telemetry charts because
     /// each bucket carries the vertical span that should be drawn for that time
     /// slice.
@@ -445,7 +367,7 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     ///     .insert_values(&[Entry::new(0, 4), Entry::new(1, 9), Entry::new(2, 5)])
     ///     .expect("timestamps are monotonic");
     ///
-    /// let envelope = series.range_envelope(0, 3, 1);
+    /// let envelope = series.range_envelope(0, 3, 1).collect::<Vec<_>>();
     /// assert_eq!(envelope[0].min, Some(4));
     /// assert_eq!(envelope[0].max, Some(9));
     /// ```
@@ -454,29 +376,12 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
         start: u64,
         end: u64,
         target_buckets: usize,
-    ) -> Vec<EnvelopeBucket<V>>
+    ) -> impl Iterator<Item = EnvelopeBucket<V>> + '_
     where
         S: EnvelopeSummary<V>,
     {
-        let bucket_count = bucket_count(start, end, target_buckets);
-        let mut envelope = Vec::with_capacity(bucket_count);
-        self.visit_range_envelope(start, end, target_buckets, |bucket| {
-            envelope.push(bucket);
-        });
-        envelope
-    }
-
-    /// Visit min/max envelope buckets for a range query.
-    ///
-    /// This is the no-allocation form of [`Chronology::range_envelope`].
-    pub fn visit_range_envelope<F>(&self, start: u64, end: u64, target_buckets: usize, mut visit: F)
-    where
-        S: EnvelopeSummary<V>,
-        F: FnMut(EnvelopeBucket<V>),
-    {
-        self.visit_range_summaries(start, end, target_buckets, |summary| {
-            visit(EnvelopeBucket::from_range_summary(summary));
-        });
+        self.bucketed_summaries(start, end, target_buckets)
+            .map(EnvelopeBucket::from_range_summary)
     }
 
     /// Find the nearest value in time.
@@ -724,6 +629,144 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
             start += span;
         }
     }
+}
+
+struct EntriesInRange<'a, V, S, C>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
+    chronology: &'a Chronology<V, S, C>,
+    start: u64,
+    end: u64,
+    chunk_index: usize,
+    current_entries: Option<ChunkEntries<'a, V, C>>,
+}
+
+impl<'a, V, S, C> EntriesInRange<'a, V, S, C>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
+    fn new(chronology: &'a Chronology<V, S, C>, start: u64, end: u64) -> Self {
+        let chunk_index = if start >= end {
+            chronology.chunk_count()
+        } else {
+            chronology
+                .first_chunk_with_end_at_least(start)
+                .unwrap_or_else(|| chronology.chunk_count())
+        };
+
+        EntriesInRange {
+            chronology,
+            start,
+            end,
+            chunk_index,
+            current_entries: None,
+        }
+    }
+}
+
+impl<'a, V, S, C> Iterator for EntriesInRange<'a, V, S, C>
+where
+    V: Copy + 'a,
+    S: Summary<V>,
+    C: ChunkCodec<V> + 'a,
+{
+    type Item = Entry<V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(entries) = &mut self.current_entries {
+                if let Some(entry) = entries.next() {
+                    return Some(entry);
+                }
+                self.current_entries = None;
+            }
+
+            if self.chunk_index >= self.chronology.chunk_count() {
+                return None;
+            }
+
+            let chunk = self.chronology.chunk(self.chunk_index);
+            if chunk.start_timestamp() >= self.end {
+                return None;
+            }
+
+            self.chunk_index += 1;
+            self.current_entries = Some(chunk.entries(self.start, self.end));
+        }
+    }
+}
+
+struct BucketedSummaries<'a, V, S, C>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
+    chronology: &'a Chronology<V, S, C>,
+    start: u64,
+    span: u64,
+    bucket_count: usize,
+    bucket: usize,
+}
+
+impl<'a, V, S, C> BucketedSummaries<'a, V, S, C>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
+    fn new(
+        chronology: &'a Chronology<V, S, C>,
+        start: u64,
+        end: u64,
+        target_buckets: usize,
+    ) -> Self {
+        BucketedSummaries {
+            chronology,
+            start,
+            span: end.saturating_sub(start),
+            bucket_count: bucket_count(start, end, target_buckets),
+            bucket: 0,
+        }
+    }
+}
+
+impl<V, S, C> Iterator for BucketedSummaries<'_, V, S, C>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
+    type Item = RangeSummary<S>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.bucket >= self.bucket_count {
+            return None;
+        }
+
+        let bucket_start = bucket_boundary(self.start, self.span, self.bucket, self.bucket_count);
+        let bucket_end = bucket_boundary(self.start, self.span, self.bucket + 1, self.bucket_count);
+        self.bucket += 1;
+        Some(self.chronology.range_summary(bucket_start, bucket_end))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.bucket_count - self.bucket;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<V, S, C> ExactSizeIterator for BucketedSummaries<'_, V, S, C>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
 }
 
 fn bucket_boundary(start: u64, span: u64, bucket: usize, bucket_count: usize) -> u64 {

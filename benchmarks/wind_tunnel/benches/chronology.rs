@@ -127,17 +127,19 @@ fn range_summaries(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(VIEWPORT_BUCKETS as u64));
         group.bench_with_input(
-            BenchmarkId::new("viewport_buckets", series_len),
+            BenchmarkId::new("bucketed_summaries_reuse", series_len),
             &series_len,
             |b, _| {
+                let mut summaries = Vec::with_capacity(VIEWPORT_BUCKETS);
                 b.iter(|| {
-                    let summaries = chronology.summarize_range(
+                    summaries.clear();
+                    summaries.extend(chronology.bucketed_summaries(
                         black_box(0),
                         black_box(end),
                         black_box(VIEWPORT_BUCKETS),
-                    );
+                    ));
                     black_box(summaries.len());
-                    black_box(summaries);
+                    black_box(&summaries);
                 });
             },
         );
@@ -206,62 +208,52 @@ fn codec_range_summaries(c: &mut Criterion) {
     let end = (BATCH_LEN as u64).saturating_mul(16);
 
     group.throughput(Throughput::Elements(VIEWPORT_BUCKETS as u64));
-    group.bench_function("raw_viewport_buckets_1m", |b| {
+    group.bench_function("raw_bucketed_summaries_reuse_1m", |b| {
+        let mut summaries = Vec::with_capacity(VIEWPORT_BUCKETS);
         b.iter(|| {
-            let summaries =
-                raw.summarize_range(black_box(0), black_box(end), black_box(VIEWPORT_BUCKETS));
-            black_box(summaries);
-        });
-    });
-    group.bench_function("gorilla_f64_viewport_buckets_1m", |b| {
-        b.iter(|| {
-            let summaries =
-                gorilla.summarize_range(black_box(0), black_box(end), black_box(VIEWPORT_BUCKETS));
-            black_box(summaries);
-        });
-    });
-    group.bench_function("raw_visit_bucketed_summaries_1m", |b| {
-        b.iter(|| {
-            let mut total_len = 0;
-            raw.visit_range_summaries(
+            summaries.clear();
+            summaries.extend(raw.bucketed_summaries(
                 black_box(0),
                 black_box(end),
                 black_box(VIEWPORT_BUCKETS),
-                |summary| {
-                    total_len += summary.len;
-                    black_box(summary.summary);
-                },
-            );
-            black_box(total_len);
+            ));
+            black_box(&summaries);
         });
     });
-    group.bench_function("gorilla_f64_visit_bucketed_summaries_1m", |b| {
+    group.bench_function("gorilla_f64_bucketed_summaries_reuse_1m", |b| {
+        let mut summaries = Vec::with_capacity(VIEWPORT_BUCKETS);
         b.iter(|| {
-            let mut total_len = 0;
-            gorilla.visit_range_summaries(
+            summaries.clear();
+            summaries.extend(gorilla.bucketed_summaries(
                 black_box(0),
                 black_box(end),
                 black_box(VIEWPORT_BUCKETS),
-                |summary| {
-                    total_len += summary.len;
-                    black_box(summary.summary);
-                },
-            );
-            black_box(total_len);
+            ));
+            black_box(&summaries);
         });
     });
-    group.bench_function("raw_range_envelope_1m", |b| {
+    group.bench_function("raw_range_envelope_reuse_1m", |b| {
+        let mut envelope = Vec::with_capacity(VIEWPORT_BUCKETS);
         b.iter(|| {
-            let envelope =
-                raw.range_envelope(black_box(0), black_box(end), black_box(VIEWPORT_BUCKETS));
-            black_box(envelope);
+            envelope.clear();
+            envelope.extend(raw.range_envelope(
+                black_box(0),
+                black_box(end),
+                black_box(VIEWPORT_BUCKETS),
+            ));
+            black_box(&envelope);
         });
     });
-    group.bench_function("gorilla_f64_range_envelope_1m", |b| {
+    group.bench_function("gorilla_f64_range_envelope_reuse_1m", |b| {
+        let mut envelope = Vec::with_capacity(VIEWPORT_BUCKETS);
         b.iter(|| {
-            let envelope =
-                gorilla.range_envelope(black_box(0), black_box(end), black_box(VIEWPORT_BUCKETS));
-            black_box(envelope);
+            envelope.clear();
+            envelope.extend(gorilla.range_envelope(
+                black_box(0),
+                black_box(end),
+                black_box(VIEWPORT_BUCKETS),
+            ));
+            black_box(&envelope);
         });
     });
 
@@ -276,25 +268,25 @@ fn codec_exact_range_entries(c: &mut Criterion) {
     let end = start + (EXACT_RANGE_LEN as u64).saturating_mul(16);
 
     group.throughput(Throughput::Elements(EXACT_RANGE_LEN as u64));
-    group.bench_function("raw_visit_65536", |b| {
+    group.bench_function("raw_iter_65536", |b| {
         b.iter(|| {
             let mut count = 0;
             let mut sum = 0.0;
-            raw.visit_range_entries(black_box(start), black_box(end), |entry| {
+            for entry in raw.entries_in_range(black_box(start), black_box(end)) {
                 count += 1;
                 sum += entry.value;
-            });
+            }
             black_box((count, sum));
         });
     });
-    group.bench_function("gorilla_f64_visit_65536", |b| {
+    group.bench_function("gorilla_f64_iter_65536", |b| {
         b.iter(|| {
             let mut count = 0;
             let mut sum = 0.0;
-            gorilla.visit_range_entries(black_box(start), black_box(end), |entry| {
+            for entry in gorilla.entries_in_range(black_box(start), black_box(end)) {
                 count += 1;
                 sum += entry.value;
-            });
+            }
             black_box((count, sum));
         });
     });
@@ -371,11 +363,27 @@ fn lttb_downsampling(c: &mut Criterion) {
 
     group.throughput(Throughput::Elements(BATCH_LEN as u64));
     group.bench_function("entries_1m_to_1024", |b| {
+        let mut sampled = Vec::with_capacity(LTTB_TARGET_LEN);
         b.iter(|| {
-            let sampled = lttb(black_box(&entries), black_box(LTTB_TARGET_LEN), |value| {
+            sampled.clear();
+            for entry in lttb(black_box(&entries), black_box(LTTB_TARGET_LEN), |value| {
                 value
-            });
-            black_box(sampled);
+            }) {
+                sampled.push(entry);
+            }
+            black_box(&sampled);
+        });
+    });
+    group.bench_function("entries_1m_to_1024_count", |b| {
+        b.iter(|| {
+            let mut count = 0;
+            for entry in lttb(black_box(&entries), black_box(LTTB_TARGET_LEN), |value| {
+                value
+            }) {
+                count += 1;
+                black_box(entry);
+            }
+            black_box(count);
         });
     });
 

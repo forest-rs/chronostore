@@ -68,13 +68,13 @@ sealed chunks against the raw baseline.
 
 Current public pieces include:
 
-- exact entry range visiting and extraction for hover, inspection, export, and
-  display algorithms that need raw samples
-- bucketed range summaries for zoomed chart views
-- min/max envelope buckets for charts that must preserve spikes
+- exact entry range iterators for hover, inspection, export, and display
+  algorithms that need raw samples
+- bucketed range summary iterators for zoomed chart views
+- min/max envelope iterators for charts that must preserve spikes
 - pluggable summaries, including `SimpleSummary` and `StatsSummary`
 - bounded retention by sealed chunk count or by timestamp window
-- a free LTTB helper over decoded entries for display downsampling
+- a free LTTB iterator over decoded entries for display downsampling
 
 ## Benchmarks
 

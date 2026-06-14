@@ -5,7 +5,6 @@
 // except according to those terms.
 
 use crate::Entry;
-use alloc::vec::Vec;
 
 /// Downsample entries with Largest Triangle Three Buckets.
 ///
@@ -18,11 +17,9 @@ use alloc::vec::Vec;
 /// Series for Visual Representation*](https://skemman.is/bitstream/1946/15343/3/SS_MSthesis.pdf),
 /// 2013.
 ///
-/// This function borrows the input slice; it does not copy every input entry.
-/// It allocates and returns a `Vec` containing the selected output entries. If
-/// the input slice comes from [`Chronology::entries_in_range`](crate::Chronology::entries_in_range),
-/// that range extraction has already materialized exact entries before LTTB
-/// runs.
+/// This function borrows the input slice and returns an iterator. It does not
+/// allocate and does not copy every input entry. Callers that want to reuse an
+/// output allocation can clear a buffer and push the selected entries into it.
 ///
 /// When `target_len` is greater than or equal to `entries.len()`, all entries
 /// are returned. For small targets, `target_len == 0` returns no entries,
@@ -39,57 +36,84 @@ use alloc::vec::Vec;
 ///     Entry::new(3, 3.0),
 /// ];
 ///
-/// let sampled = lttb(&entries, 3, |value| value);
+/// let sampled = lttb(&entries, 3, |value| value).collect::<Vec<_>>();
 /// assert_eq!(sampled.first(), Some(&Entry::new(0, 1.0)));
 /// assert_eq!(sampled.last(), Some(&Entry::new(3, 3.0)));
 /// assert_eq!(sampled.len(), 3);
 /// ```
-pub fn lttb<V, F>(entries: &[Entry<V>], target_len: usize, project_value: F) -> Vec<Entry<V>>
+pub fn lttb<'a, V, F>(
+    entries: &'a [Entry<V>],
+    target_len: usize,
+    project_value: F,
+) -> impl Iterator<Item = Entry<V>> + 'a
+where
+    V: Copy,
+    F: Fn(V) -> f64 + 'a,
+{
+    Lttb::new(entries, target_len, project_value)
+}
+
+struct Lttb<'a, V, F>
 where
     V: Copy,
     F: Fn(V) -> f64,
 {
-    if target_len == 0 || entries.is_empty() {
-        return Vec::new();
-    }
-    if target_len >= entries.len() {
-        return entries.to_vec();
-    }
-    if target_len == 1 {
-        return alloc::vec![entries[0]];
-    }
-    if target_len == 2 {
-        return alloc::vec![entries[0], entries[entries.len() - 1]];
+    entries: &'a [Entry<V>],
+    target_len: usize,
+    project_value: F,
+    output_index: usize,
+    previous_index: usize,
+}
+
+impl<'a, V, F> Lttb<'a, V, F>
+where
+    V: Copy,
+    F: Fn(V) -> f64,
+{
+    #[inline]
+    fn new(entries: &'a [Entry<V>], target_len: usize, project_value: F) -> Self {
+        Lttb {
+            entries,
+            target_len,
+            project_value,
+            output_index: 0,
+            previous_index: 0,
+        }
     }
 
-    let mut sampled = Vec::with_capacity(target_len);
-    let interior_len = entries.len() - 2;
-    let bucket_count = target_len - 2;
-    let mut previous_index = 0;
+    #[inline]
+    fn output_len(&self) -> usize {
+        self.target_len.min(self.entries.len())
+    }
 
-    sampled.push(entries[0]);
-
-    for bucket in 0..(target_len - 2) {
+    #[inline]
+    fn selected_entry(&mut self) -> Entry<V> {
+        let bucket = self.output_index - 1;
+        let interior_len = self.entries.len() - 2;
+        let bucket_count = self.target_len - 2;
         let current_start = scaled_bucket_boundary(bucket, interior_len, bucket_count) + 1;
         let current_end = (scaled_bucket_boundary(bucket + 1, interior_len, bucket_count) + 1)
-            .min(entries.len() - 1);
+            .min(self.entries.len() - 1);
         let next_start = (scaled_bucket_boundary(bucket + 1, interior_len, bucket_count) + 1)
-            .min(entries.len() - 1);
-        let next_end =
-            (scaled_bucket_boundary(bucket + 2, interior_len, bucket_count) + 1).min(entries.len());
-        let (average_x, average_y) = average_point(&entries[next_start..next_end], &project_value)
-            .unwrap_or_else(|| {
-                let last = entries[entries.len() - 1];
-                (last.timestamp as f64, project_value(last.value))
-            });
+            .min(self.entries.len() - 1);
+        let next_end = (scaled_bucket_boundary(bucket + 2, interior_len, bucket_count) + 1)
+            .min(self.entries.len());
+        let (average_x, average_y) =
+            average_point(&self.entries[next_start..next_end], &self.project_value).unwrap_or_else(
+                || {
+                    let last = self.entries[self.entries.len() - 1];
+                    (last.timestamp as f64, (self.project_value)(last.value))
+                },
+            );
 
-        let previous = entries[previous_index];
+        let previous = self.entries[self.previous_index];
         let previous_x = previous.timestamp as f64;
-        let previous_y = project_value(previous.value);
+        let previous_y = (self.project_value)(previous.value);
         let mut selected_index = current_start;
         let mut selected_area = f64::NEG_INFINITY;
 
-        for (index, candidate) in entries
+        for (index, candidate) in self
+            .entries
             .iter()
             .copied()
             .enumerate()
@@ -97,7 +121,7 @@ where
             .skip(current_start)
         {
             let candidate_x = candidate.timestamp as f64;
-            let candidate_y = project_value(candidate.value);
+            let candidate_y = (self.project_value)(candidate.value);
             let area = triangle_area(
                 previous_x,
                 previous_y,
@@ -113,18 +137,66 @@ where
             }
         }
 
-        sampled.push(entries[selected_index]);
-        previous_index = selected_index;
+        self.previous_index = selected_index;
+        self.entries[selected_index]
     }
-
-    sampled.push(entries[entries.len() - 1]);
-    sampled
 }
 
+impl<V, F> Iterator for Lttb<'_, V, F>
+where
+    V: Copy,
+    F: Fn(V) -> f64,
+{
+    type Item = Entry<V>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let output_len = self.output_len();
+        if self.output_index >= output_len {
+            return None;
+        }
+
+        let entry = if output_len == self.entries.len() {
+            self.entries[self.output_index]
+        } else if output_len == 1 {
+            self.entries[0]
+        } else if output_len == 2 {
+            match self.output_index {
+                0 => self.entries[0],
+                _ => self.entries[self.entries.len() - 1],
+            }
+        } else {
+            match self.output_index {
+                0 => self.entries[0],
+                index if index == output_len - 1 => self.entries[self.entries.len() - 1],
+                _ => self.selected_entry(),
+            }
+        };
+
+        self.output_index += 1;
+        Some(entry)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.output_len() - self.output_index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<V, F> ExactSizeIterator for Lttb<'_, V, F>
+where
+    V: Copy,
+    F: Fn(V) -> f64,
+{
+}
+
+#[inline]
 fn scaled_bucket_boundary(bucket: usize, interior_len: usize, bucket_count: usize) -> usize {
     ((bucket as u128 * interior_len as u128) / bucket_count as u128) as usize
 }
 
+#[inline]
 fn average_point<V, F>(entries: &[Entry<V>], project_value: &F) -> Option<(f64, f64)>
 where
     V: Copy,
@@ -145,6 +217,7 @@ where
     Some((sum_x / len, sum_y / len))
 }
 
+#[inline]
 fn triangle_area(ax: f64, ay: f64, bx: f64, by: f64, cx: f64, cy: f64) -> f64 {
     ((ax - cx) * (by - ay) - (ax - bx) * (cy - ay)).abs() * 0.5
 }
