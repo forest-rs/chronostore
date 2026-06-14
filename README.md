@@ -4,7 +4,10 @@
 [![](https://img.shields.io/crates/v/chronostore.svg)](https://crates.io/crates/chronostore)
 [![docs.rs](https://img.shields.io/docsrs/chronostore)](https://docs.rs/chronostore)
 
-Chronostore is a system for storing time series in memory.
+Chronostore is a `no_std` plus `alloc` storage kernel for monotonic,
+timestamped numeric telemetry. It is meant to back profilers, frame timelines,
+devtools charts, and similar tools that need to ingest samples cheaply, retain
+bounded history, and query that history at multiple zoom levels.
 
 What is Chronostore NOT?
 
@@ -24,10 +27,6 @@ hardware counters, or other sources of high frequency,
 high precision data, it is often useful to have it in
 a form that tools can work with for analyzing and
 visualizing that data.
-
-The initial implementation is quite naive and is just
-here to get something working. Over time, the implementation
-will evolve and become significantly more sophisticated.
 
 Chronostore must be fast at inserts, fast at queries,
 and memory efficient.
@@ -54,8 +53,9 @@ chronostore = "0.0.1"
 
 ## Status of Implementation
 
-Things are under active development. This project is not quite
-usable yet as some of the basic functionality is being written.
+Things are under active development. This project is not published for stable
+external use yet, but the core storage shape is now established enough to
+measure and iterate.
 
 The current direction is a Gorilla-inspired in-memory model: monotonic samples
 are appended into an open chunk, each chunk maintains summary state, lookup uses
@@ -64,8 +64,17 @@ summary pyramid for range and viewport queries. Sealed chunks also keep
 timestamped summary tiles so partial range and viewport queries can merge full
 tiles and decode only the edges. Raw sealed chunks are the default storage
 codec. A Gorilla-inspired `f64` codec is available for comparing compressed
-sealed chunks against the raw baseline. Exact entry ranges are available for
-inspection, export, and display algorithms that need raw samples.
+sealed chunks against the raw baseline.
+
+Current public pieces include:
+
+- exact entry range visiting and extraction for hover, inspection, export, and
+  display algorithms that need raw samples
+- bucketed range summaries for zoomed chart views
+- min/max envelope buckets for charts that must preserve spikes
+- pluggable summaries, including `SimpleSummary` and `StatsSummary`
+- bounded retention by sealed chunk count or by timestamp window
+- a free LTTB helper over decoded entries for display downsampling
 
 ## Benchmarks
 
@@ -75,9 +84,9 @@ The Criterion wind tunnel lives outside the core crate:
 cargo bench -p wind_tunnel
 ```
 
-It includes million-point insert, lookup, range-summary, viewport-summary,
-exact-range, retention, and raw-vs-Gorilla codec baselines for the chunked
-storage model.
+It includes million-point insert, lookup, range-summary, bucketed-summary,
+envelope, LTTB, exact-range, retention, and raw-vs-Gorilla codec baselines for
+the chunked storage model.
 
 ## Contribution
 

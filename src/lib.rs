@@ -6,9 +6,9 @@
 
 //! # Chronostore
 //!
-//! Chronostore is a system for storing time series in memory.
-//! Chronostore is intended for use wihh datasets where a
-//! single time series has 100 million or fewer points.
+//! Chronostore is a `no_std` plus `alloc` storage kernel for monotonic,
+//! timestamped time series in memory. Chronostore is intended for datasets
+//! where a single time series has 100 million or fewer points.
 //!
 //! Chronostore intends to be fast at inserts, fast at queries,
 //! and memory efficient.
@@ -29,9 +29,11 @@
 //!
 //! ## Implementation Status
 //!
-//! The initial implementation is quite naive and is just
-//! here to get something working. Over time, the implementation
-//! will evolve and become significantly more sophisticated.
+//! Chronostore stores monotonic samples in chunks, maintains mergeable summary
+//! state, supports exact range access, supports bucketed range summaries for
+//! zoomed views, and provides display helpers such as min/max envelopes and
+//! LTTB over decoded entries. Raw sealed chunks are the default storage codec;
+//! a Gorilla-inspired `f64` codec is available for compression experiments.
 
 #![no_std]
 #![warn(clippy::doc_markdown, missing_docs)]
