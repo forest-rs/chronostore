@@ -54,8 +54,8 @@ mod summary;
 mod tests;
 
 pub use self::chronology::{
-    Chronology, ChunkSummary, InsertError, RangeSummary, RetentionPolicy, DEFAULT_CHUNK_CAPACITY,
-    SUMMARY_FANOUT,
+    Chronology, ChunkCodec, ChunkSummary, GorillaF64Chronology, GorillaF64Codec, InsertError,
+    RangeSummary, RawCodec, RetentionPolicy, DEFAULT_CHUNK_CAPACITY, SUMMARY_FANOUT,
 };
 pub use self::entry::Entry;
 pub use self::null_summary::NullSummary;

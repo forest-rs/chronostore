@@ -14,16 +14,20 @@ use crate::{Direction, Entry, Summary};
 use alloc::vec::Vec;
 use core::mem;
 
-use self::chunk::{ChunkRef, ClosedRawChunk, OpenChunk};
+use self::chunk::{ChunkRef, ClosedChunk, OpenChunk};
 use self::summary_node::SummaryNode;
 
 pub use self::chunk::ChunkSummary;
+pub use self::codec::{ChunkCodec, GorillaF64Codec, RawCodec};
 pub use self::range_summary::RangeSummary;
 pub use self::retention::RetentionPolicy;
 pub use self::summary_node::SUMMARY_FANOUT;
 
-/// Default number of entries stored in each raw chronology chunk.
+/// Default number of entries stored in each chronology chunk.
 pub const DEFAULT_CHUNK_CAPACITY: usize = 4_096;
+
+/// Convenience alias for a chronology that seals chunks with [`GorillaF64Codec`].
+pub type GorillaF64Chronology<S> = Chronology<f64, S, GorillaF64Codec>;
 
 /// Error returned when entries cannot be inserted into a [`Chronology`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,8 +112,8 @@ pub enum InsertError {
 /// assert_eq!(chrono.find_nearest_value(4, Direction::Forward),
 ///            Some(Entry::new(5, 0.5)));
 /// ```
-pub struct Chronology<V: Copy, S: Summary<V>> {
-    sealed_chunks: Vec<ClosedRawChunk<V, S>>,
+pub struct Chronology<V: Copy, S: Summary<V>, C: ChunkCodec<V> = RawCodec> {
+    sealed_chunks: Vec<ClosedChunk<V, S, C>>,
     open_chunk: OpenChunk<V, S>,
     summary_levels: Vec<Vec<SummaryNode<S>>>,
     summary: S,
@@ -118,13 +122,13 @@ pub struct Chronology<V: Copy, S: Summary<V>> {
     len: usize,
 }
 
-impl<V: Copy, S: Summary<V>> Default for Chronology<V, S> {
+impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Default for Chronology<V, S, C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<V: Copy, S: Summary<V>> Chronology<V, S> {
+impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     /// Create a new [`Chronology`] with [`DEFAULT_CHUNK_CAPACITY`].
     pub fn new() -> Self {
         Self::with_chunk_capacity(DEFAULT_CHUNK_CAPACITY)
@@ -196,6 +200,17 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
     /// The currently open chunk is not counted here.
     pub fn sealed_chunk_count(&self) -> usize {
         self.sealed_chunks.len()
+    }
+
+    /// Return the total encoded payload size for sealed chunks, in bytes.
+    ///
+    /// This excludes allocator capacity, chunk metadata, open chunk storage,
+    /// and summary-pyramid nodes. It is intended for codec comparisons.
+    pub fn sealed_encoded_size(&self) -> usize {
+        self.sealed_chunks
+            .iter()
+            .map(ClosedChunk::encoded_size)
+            .sum()
     }
 
     /// Return the number of chunks with entries.
@@ -383,7 +398,7 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
     fn seal_open_chunk(&mut self) {
         let next_open_chunk = OpenChunk::with_capacity(self.chunk_capacity);
         let open_chunk = mem::replace(&mut self.open_chunk, next_open_chunk);
-        let sealed_chunk = open_chunk.seal();
+        let sealed_chunk = open_chunk.seal::<C>();
         let summary_node = sealed_chunk.summary_node();
         self.sealed_chunks.push(sealed_chunk);
         self.push_summary_node(0, summary_node);
@@ -393,15 +408,13 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
     fn find_forward(&self, timestamp: u64) -> Option<Entry<V>> {
         let chunk_index = self.first_chunk_with_end_at_least(timestamp)?;
         let chunk = self.chunk(chunk_index);
-        let value_index = chunk.first_index_at_least(timestamp)?;
-        Some(chunk.entry(value_index))
+        chunk.entry_at_or_after(timestamp)
     }
 
     fn find_backward(&self, timestamp: u64) -> Option<Entry<V>> {
         let chunk_index = self.last_chunk_with_start_at_most(timestamp)?;
         let chunk = self.chunk(chunk_index);
-        let value_index = chunk.last_index_at_most(timestamp)?;
-        Some(chunk.entry(value_index))
+        chunk.entry_at_or_before(timestamp)
     }
 
     fn first_chunk_with_end_at_least(&self, timestamp: u64) -> Option<usize> {
@@ -441,10 +454,10 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
     fn last_timestamp(&self) -> Option<u64> {
         self.open_chunk
             .last_timestamp()
-            .or_else(|| self.sealed_chunks.last().map(ClosedRawChunk::end_timestamp))
+            .or_else(|| self.sealed_chunks.last().map(ClosedChunk::end_timestamp))
     }
 
-    fn chunk(&self, index: usize) -> ChunkRef<'_, V, S> {
+    fn chunk(&self, index: usize) -> ChunkRef<'_, V, S, C> {
         if index < self.sealed_chunks.len() {
             ChunkRef::Closed(&self.sealed_chunks[index])
         } else {
@@ -484,7 +497,7 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
             .sealed_chunks
             .iter()
             .take(evict_count)
-            .map(ClosedRawChunk::len)
+            .map(ClosedChunk::len)
             .sum::<usize>();
 
         self.sealed_chunks.drain(0..evict_count);

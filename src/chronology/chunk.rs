@@ -4,7 +4,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::codec::{ChunkCodec, RawCodec};
+use super::codec::ChunkCodec;
 use super::{RangeSummary, SummaryNode};
 use crate::{Entry, Summary};
 use alloc::vec::Vec;
@@ -23,8 +23,6 @@ pub struct ChunkSummary<'a, S> {
     /// Summary for the chunk.
     pub summary: &'a S,
 }
-
-pub(super) type ClosedRawChunk<V, S> = ClosedChunk<V, S, RawCodec>;
 
 pub(super) struct OpenChunk<V: Copy, S: Summary<V>> {
     timestamps: Vec<u64>,
@@ -97,18 +95,28 @@ impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
         self.timestamps.last().copied()
     }
 
-    pub(super) fn first_index_at_least(&self, timestamp: u64) -> Option<usize> {
+    fn first_index_at_least(&self, timestamp: u64) -> Option<usize> {
         match self.timestamps.binary_search(&timestamp) {
             Ok(index) => Some(index),
             Err(index) => (index < self.timestamps.len()).then_some(index),
         }
     }
 
-    pub(super) fn last_index_at_most(&self, timestamp: u64) -> Option<usize> {
+    fn last_index_at_most(&self, timestamp: u64) -> Option<usize> {
         match self.timestamps.binary_search(&timestamp) {
             Ok(index) => Some(index),
             Err(index) => index.checked_sub(1),
         }
+    }
+
+    pub(super) fn entry_at_or_after(&self, timestamp: u64) -> Option<Entry<V>> {
+        let index = self.first_index_at_least(timestamp)?;
+        Some(self.entry(index))
+    }
+
+    pub(super) fn entry_at_or_before(&self, timestamp: u64) -> Option<Entry<V>> {
+        let index = self.last_index_at_most(timestamp)?;
+        Some(self.entry(index))
     }
 
     pub(super) fn add_range_summary(
@@ -189,12 +197,16 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> ClosedChunk<V, S, C> {
         self.end
     }
 
-    pub(super) fn first_index_at_least(&self, timestamp: u64) -> Option<usize> {
-        C::first_index_at_least(&self.encoded, timestamp)
+    pub(super) fn encoded_size(&self) -> usize {
+        C::encoded_size(&self.encoded)
     }
 
-    pub(super) fn last_index_at_most(&self, timestamp: u64) -> Option<usize> {
-        C::last_index_at_most(&self.encoded, timestamp)
+    pub(super) fn entry_at_or_after(&self, timestamp: u64) -> Option<Entry<V>> {
+        C::entry_at_or_after(&self.encoded, timestamp)
+    }
+
+    pub(super) fn entry_at_or_before(&self, timestamp: u64) -> Option<Entry<V>> {
+        C::entry_at_or_before(&self.encoded, timestamp)
     }
 
     pub(super) fn add_range_summary(
@@ -203,34 +215,17 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> ClosedChunk<V, S, C> {
         end: u64,
         range_summary: &mut RangeSummary<S>,
     ) {
-        let indices = C::range_indices(&self.encoded, start, end);
-        if indices.is_empty() {
-            return;
-        }
-
-        let mut summary = S::default();
-        let mut len = 0;
-
-        for index in indices {
-            summary.update(&self.entry(index));
-            len += 1;
-        }
-
-        range_summary.add_summary::<V>(len, &summary);
-    }
-
-    pub(super) fn entry(&self, index: usize) -> Entry<V> {
-        C::entry(&self.encoded, index)
+        C::add_range_summary(&self.encoded, start, end, range_summary);
     }
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum ChunkRef<'a, V: Copy, S: Summary<V>> {
-    Closed(&'a ClosedRawChunk<V, S>),
+pub(super) enum ChunkRef<'a, V: Copy, S: Summary<V>, C: ChunkCodec<V>> {
+    Closed(&'a ClosedChunk<V, S, C>),
     Open(&'a OpenChunk<V, S>),
 }
 
-impl<'a, V: Copy, S: Summary<V>> ChunkRef<'a, V, S> {
+impl<'a, V: Copy, S: Summary<V>, C: ChunkCodec<V>> ChunkRef<'a, V, S, C> {
     pub(super) fn len(&self) -> usize {
         match self {
             ChunkRef::Closed(chunk) => chunk.len(),
@@ -252,17 +247,17 @@ impl<'a, V: Copy, S: Summary<V>> ChunkRef<'a, V, S> {
         }
     }
 
-    pub(super) fn first_index_at_least(&self, timestamp: u64) -> Option<usize> {
+    pub(super) fn entry_at_or_after(&self, timestamp: u64) -> Option<Entry<V>> {
         match self {
-            ChunkRef::Closed(chunk) => chunk.first_index_at_least(timestamp),
-            ChunkRef::Open(chunk) => chunk.first_index_at_least(timestamp),
+            ChunkRef::Closed(chunk) => chunk.entry_at_or_after(timestamp),
+            ChunkRef::Open(chunk) => chunk.entry_at_or_after(timestamp),
         }
     }
 
-    pub(super) fn last_index_at_most(&self, timestamp: u64) -> Option<usize> {
+    pub(super) fn entry_at_or_before(&self, timestamp: u64) -> Option<Entry<V>> {
         match self {
-            ChunkRef::Closed(chunk) => chunk.last_index_at_most(timestamp),
-            ChunkRef::Open(chunk) => chunk.last_index_at_most(timestamp),
+            ChunkRef::Closed(chunk) => chunk.entry_at_or_before(timestamp),
+            ChunkRef::Open(chunk) => chunk.entry_at_or_before(timestamp),
         }
     }
 
@@ -275,13 +270,6 @@ impl<'a, V: Copy, S: Summary<V>> ChunkRef<'a, V, S> {
         match self {
             ChunkRef::Closed(chunk) => chunk.add_range_summary(start, end, range_summary),
             ChunkRef::Open(chunk) => chunk.add_range_summary(start, end, range_summary),
-        }
-    }
-
-    pub(super) fn entry(&self, index: usize) -> Entry<V> {
-        match self {
-            ChunkRef::Closed(chunk) => chunk.entry(index),
-            ChunkRef::Open(chunk) => chunk.entry(index),
         }
     }
 

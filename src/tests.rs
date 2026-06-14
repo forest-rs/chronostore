@@ -239,3 +239,57 @@ fn setting_retention_rebuilds_summaries_and_keeps_open_chunk() {
     assert_eq!(summary.summary.min, Some(4));
     assert_eq!(summary.summary.max, Some(8));
 }
+
+#[test]
+fn gorilla_f64_codec_matches_raw_queries() {
+    let entries = [
+        Entry::new(0, 1.0),
+        Entry::new(16, 1.0),
+        Entry::new(32, 1.5),
+        Entry::new(63, -2.25),
+        Entry::new(95, 256.5),
+        Entry::new(128, 256.5),
+        Entry::new(160, 0.125),
+    ];
+
+    let mut raw = Chronology::<f64, SimpleSummary<f64>>::with_chunk_capacity(3);
+    let mut gorilla = GorillaF64Chronology::<SimpleSummary<f64>>::with_chunk_capacity(3);
+
+    raw.insert_values(&entries)
+        .expect("timestamps are monotonic");
+    gorilla
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert!(raw.sealed_encoded_size() > 0);
+    assert!(gorilla.sealed_encoded_size() > 0);
+    assert_eq!(raw.sealed_chunk_count(), gorilla.sealed_chunk_count());
+
+    for (timestamp, direction) in [
+        (0, Direction::Forward),
+        (1, Direction::Forward),
+        (64, Direction::Backward),
+        (95, Direction::Backward),
+        (161, Direction::Backward),
+    ] {
+        assert_eq!(
+            raw.find_nearest_value(timestamp, direction),
+            gorilla.find_nearest_value(timestamp, direction)
+        );
+    }
+
+    let raw_summary = raw.range_summary(16, 129);
+    let gorilla_summary = gorilla.range_summary(16, 129);
+    assert_eq!(raw_summary.len, gorilla_summary.len);
+    assert_eq!(raw_summary.summary.min, gorilla_summary.summary.min);
+    assert_eq!(raw_summary.summary.max, gorilla_summary.summary.max);
+
+    let raw_buckets = raw.summarize_range(0, 161, 5);
+    let gorilla_buckets = gorilla.summarize_range(0, 161, 5);
+    assert_eq!(raw_buckets.len(), gorilla_buckets.len());
+    for (raw_bucket, gorilla_bucket) in raw_buckets.iter().zip(gorilla_buckets.iter()) {
+        assert_eq!(raw_bucket.len, gorilla_bucket.len);
+        assert_eq!(raw_bucket.summary.min, gorilla_bucket.summary.min);
+        assert_eq!(raw_bucket.summary.max, gorilla_bucket.summary.max);
+    }
+}
