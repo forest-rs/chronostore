@@ -58,11 +58,11 @@ Things are under active development. This project is not quite
 usable yet as some of the basic functionality is being written.
 
 The current direction is a Gorilla-inspired in-memory model: monotonic samples
-are appended into raw chunks, each chunk maintains summary state, lookup uses
+are appended into an open chunk, each chunk maintains summary state, lookup uses
 chunk boundaries before searching within a chunk, and sealed chunks feed a
-summary pyramid for range and viewport queries. Future work will add compressed
-chunks for zoomable timeline consumers such as profilers and per-frame
-diagnostics.
+summary pyramid for range and viewport queries. Raw sealed chunks are the
+default storage codec. A Gorilla-inspired `f64` codec is available for comparing
+compressed sealed chunks against the raw baseline.
 
 ## Benchmarks
 
@@ -72,8 +72,8 @@ The Criterion wind tunnel lives outside the core crate:
 cargo bench -p wind_tunnel
 ```
 
-It includes million-point insert, lookup, range-summary, and viewport-summary
-baselines for the chunked storage model.
+It includes million-point insert, lookup, range-summary, viewport-summary,
+retention, and raw-vs-Gorilla codec baselines for the chunked storage model.
 
 ## Contribution
 

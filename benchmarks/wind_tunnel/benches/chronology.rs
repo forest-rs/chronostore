@@ -7,7 +7,8 @@
 //! Baseline chronology storage benchmarks.
 
 use chronostore::{
-    Chronology, Direction, Entry, NullSummary, RetentionPolicy, SimpleSummary, Summary,
+    Chronology, ChunkCodec, Direction, Entry, GorillaF64Codec, NullSummary, RawCodec,
+    RetentionPolicy, SimpleSummary, Summary,
 };
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
@@ -142,6 +143,84 @@ fn range_summaries(c: &mut Criterion) {
     group.finish();
 }
 
+fn codec_storage(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codec_storage");
+    let raw = seed_chronology_with_codec::<NullSummary<f64>, RawCodec>(BATCH_LEN);
+    let gorilla = seed_chronology_with_codec::<NullSummary<f64>, GorillaF64Codec>(BATCH_LEN);
+    let raw_size = raw.sealed_encoded_size();
+    let gorilla_size = gorilla.sealed_encoded_size();
+
+    group.throughput(Throughput::Elements(BATCH_LEN as u64));
+    group.bench_with_input(
+        BenchmarkId::new("raw_sealed_encoded_size_bytes", raw_size),
+        &raw,
+        |b, chronology| {
+            b.iter(|| black_box(chronology.sealed_encoded_size()));
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("gorilla_f64_sealed_encoded_size_bytes", gorilla_size),
+        &gorilla,
+        |b, chronology| {
+            b.iter(|| black_box(chronology.sealed_encoded_size()));
+        },
+    );
+
+    group.finish();
+}
+
+fn codec_find_nearest_value(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codec_find_nearest_value");
+    let raw = seed_chronology_with_codec::<NullSummary<f64>, RawCodec>(BATCH_LEN);
+    let gorilla = seed_chronology_with_codec::<NullSummary<f64>, GorillaF64Codec>(BATCH_LEN);
+    let queries = build_queries(QUERY_LEN, BATCH_LEN as u64);
+
+    group.throughput(Throughput::Elements(queries.len() as u64));
+    group.bench_function("raw_forward_1m", |b| {
+        b.iter(|| {
+            for query in &queries {
+                black_box(raw.find_nearest_value(black_box(*query), black_box(Direction::Forward)));
+            }
+        });
+    });
+    group.bench_function("gorilla_f64_forward_1m", |b| {
+        b.iter(|| {
+            for query in &queries {
+                black_box(
+                    gorilla.find_nearest_value(black_box(*query), black_box(Direction::Forward)),
+                );
+            }
+        });
+    });
+
+    group.finish();
+}
+
+fn codec_range_summaries(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codec_range_summaries");
+    let raw = seed_chronology_with_codec::<SimpleSummary<f64>, RawCodec>(BATCH_LEN);
+    let gorilla = seed_chronology_with_codec::<SimpleSummary<f64>, GorillaF64Codec>(BATCH_LEN);
+    let end = (BATCH_LEN as u64).saturating_mul(16);
+
+    group.throughput(Throughput::Elements(VIEWPORT_BUCKETS as u64));
+    group.bench_function("raw_viewport_buckets_1m", |b| {
+        b.iter(|| {
+            let summaries =
+                raw.summarize_range(black_box(0), black_box(end), black_box(VIEWPORT_BUCKETS));
+            black_box(summaries);
+        });
+    });
+    group.bench_function("gorilla_f64_viewport_buckets_1m", |b| {
+        b.iter(|| {
+            let summaries =
+                gorilla.summarize_range(black_box(0), black_box(end), black_box(VIEWPORT_BUCKETS));
+            black_box(summaries);
+        });
+    });
+
+    group.finish();
+}
+
 fn retention(c: &mut Criterion) {
     let mut group = c.benchmark_group("retention");
     group.throughput(Throughput::Elements(CHUNK_CAPACITY as u64));
@@ -181,7 +260,15 @@ fn seed_chronology<S>(len: usize) -> Chronology<f64, S>
 where
     S: Summary<f64>,
 {
-    let mut chronology = Chronology::<f64, S>::with_chunk_capacity(CHUNK_CAPACITY);
+    seed_chronology_with_codec::<S, RawCodec>(len)
+}
+
+fn seed_chronology_with_codec<S, C>(len: usize) -> Chronology<f64, S, C>
+where
+    S: Summary<f64>,
+    C: ChunkCodec<f64>,
+{
+    let mut chronology = Chronology::<f64, S, C>::with_chunk_capacity(CHUNK_CAPACITY);
     let mut start = 0;
 
     while start < len {
@@ -226,6 +313,7 @@ fn build_queries(len: usize, series_len: u64) -> Vec<u64> {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(10);
-    targets = insert_values, find_nearest_value, range_summaries, retention
+    targets = insert_values, find_nearest_value, range_summaries, codec_storage,
+        codec_find_nearest_value, codec_range_summaries, retention
 }
 criterion_main!(benches);
