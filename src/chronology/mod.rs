@@ -4,16 +4,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+mod chunk;
+mod range_summary;
+mod summary_node;
+
 use crate::{Direction, Entry, Summary};
 use alloc::vec::Vec;
 use core::mem;
-use core::ops::Range;
+
+use self::chunk::Chunk;
+use self::summary_node::SummaryNode;
+
+pub use self::chunk::ChunkSummary;
+pub use self::range_summary::RangeSummary;
+pub use self::summary_node::SUMMARY_FANOUT;
 
 /// Default number of entries stored in each raw chronology chunk.
 pub const DEFAULT_CHUNK_CAPACITY: usize = 4_096;
-
-/// Number of child summary nodes merged into each higher-level summary node.
-pub const SUMMARY_FANOUT: usize = 8;
 
 /// Error returned when entries cannot be inserted into a [`Chronology`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,56 +32,6 @@ pub enum InsertError {
         /// Rejected timestamp.
         next: u64,
     },
-}
-
-/// Borrowed summary metadata for one chronology chunk.
-#[derive(Clone, Copy)]
-pub struct ChunkSummary<'a, S> {
-    /// Start timestamp for the chunk.
-    pub start: u64,
-    /// End timestamp for the chunk.
-    pub end: u64,
-    /// Number of entries stored in the chunk.
-    pub len: usize,
-    /// Summary for the chunk.
-    pub summary: &'a S,
-}
-
-/// Owned summary metadata for a timestamp range.
-#[derive(Clone)]
-pub struct RangeSummary<S> {
-    /// Inclusive start of the summarized timestamp range.
-    pub start: u64,
-    /// Exclusive end of the summarized timestamp range.
-    pub end: u64,
-    /// Number of entries represented by this summary.
-    pub len: usize,
-    /// Summary for entries whose timestamps fall inside `start..end`.
-    pub summary: S,
-}
-
-impl<S> RangeSummary<S> {
-    fn empty(start: u64, end: u64) -> Self
-    where
-        S: Default,
-    {
-        RangeSummary {
-            start,
-            end,
-            len: 0,
-            summary: S::default(),
-        }
-    }
-    fn add_summary<V>(&mut self, len: usize, summary: &S)
-    where
-        S: Summary<V>,
-    {
-        if len == 0 {
-            return;
-        }
-        self.len += len;
-        self.summary.merge(summary);
-    }
 }
 
 /// A stream of values over time for a single variable.
@@ -510,141 +467,4 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
 
 fn bucket_boundary(start: u64, span: u64, bucket: usize, bucket_count: usize) -> u64 {
     start + ((u128::from(span) * bucket as u128) / bucket_count as u128) as u64
-}
-
-struct SummaryNode<S> {
-    start: u64,
-    end: u64,
-    len: usize,
-    summary: S,
-}
-
-impl<S> SummaryNode<S> {
-    fn merge_nodes<V>(nodes: &[SummaryNode<S>]) -> Self
-    where
-        S: Summary<V>,
-    {
-        debug_assert!(!nodes.is_empty());
-
-        let mut summary = nodes[0].summary.clone();
-        let mut len = nodes[0].len;
-
-        for node in &nodes[1..] {
-            len += node.len;
-            summary.merge(&node.summary);
-        }
-
-        SummaryNode {
-            start: nodes[0].start,
-            end: nodes[nodes.len() - 1].end,
-            len,
-            summary,
-        }
-    }
-}
-
-struct Chunk<V: Copy, S: Summary<V>> {
-    timestamps: Vec<u64>,
-    values: Vec<V>,
-    summary: S,
-}
-
-impl<V: Copy, S: Summary<V>> Chunk<V, S> {
-    fn with_capacity(capacity: usize) -> Self {
-        Chunk {
-            timestamps: Vec::with_capacity(capacity),
-            values: Vec::with_capacity(capacity),
-            summary: S::default(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.timestamps.is_empty()
-    }
-
-    fn len(&self) -> usize {
-        self.timestamps.len()
-    }
-
-    fn push(&mut self, entry: Entry<V>) {
-        self.timestamps.push(entry.timestamp);
-        self.values.push(entry.value);
-        self.summary.update(&entry);
-    }
-
-    fn summary(&self) -> ChunkSummary<'_, S> {
-        ChunkSummary {
-            start: self.start_timestamp(),
-            end: self.end_timestamp(),
-            len: self.len(),
-            summary: &self.summary,
-        }
-    }
-
-    fn summary_node(&self) -> SummaryNode<S> {
-        SummaryNode {
-            start: self.start_timestamp(),
-            end: self.end_timestamp(),
-            len: self.len(),
-            summary: self.summary.clone(),
-        }
-    }
-
-    fn start_timestamp(&self) -> u64 {
-        self.timestamps[0]
-    }
-
-    fn end_timestamp(&self) -> u64 {
-        self.timestamps[self.timestamps.len() - 1]
-    }
-
-    fn last_timestamp(&self) -> Option<u64> {
-        self.timestamps.last().copied()
-    }
-
-    fn first_index_at_least(&self, timestamp: u64) -> Option<usize> {
-        match self.timestamps.binary_search(&timestamp) {
-            Ok(index) => Some(index),
-            Err(index) => (index < self.timestamps.len()).then_some(index),
-        }
-    }
-
-    fn last_index_at_most(&self, timestamp: u64) -> Option<usize> {
-        match self.timestamps.binary_search(&timestamp) {
-            Ok(index) => Some(index),
-            Err(index) => index.checked_sub(1),
-        }
-    }
-
-    fn range_indices(&self, start: u64, end: u64) -> Range<usize> {
-        let start_index = match self.timestamps.binary_search(&start) {
-            Ok(index) | Err(index) => index,
-        };
-        let end_index = match self.timestamps.binary_search(&end) {
-            Ok(index) | Err(index) => index,
-        };
-
-        start_index..end_index
-    }
-
-    fn add_range_summary(&self, start: u64, end: u64, range_summary: &mut RangeSummary<S>) {
-        let indices = self.range_indices(start, end);
-        if indices.is_empty() {
-            return;
-        }
-
-        let mut summary = S::default();
-        let mut len = 0;
-
-        for index in indices {
-            summary.update(&self.entry(index));
-            len += 1;
-        }
-
-        range_summary.add_summary::<V>(len, &summary);
-    }
-
-    fn entry(&self, index: usize) -> Entry<V> {
-        Entry::new(self.timestamps[index], self.values[index])
-    }
 }
