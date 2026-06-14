@@ -10,8 +10,6 @@ readme = "../../README.md"
 description = "A system for storing time series data in memory."
 categories = ["data-structures", "development-tools", "no-std"]
 keywords = ["time series", "timeseries", "series"]
-documentation = "https://endoli.github.io/chronostore.rs/"
-homepage = "https://github.com/endoli/chronostore.rs"
 
 [dependencies]
 

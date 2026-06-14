@@ -1,6 +1,6 @@
 # chronostore
 
-[![CI](https://github.com/endoli/chronostore.rs/actions/workflows/ci.yml/badge.svg)](https://github.com/endoli/chronostore.rs/actions/workflows/ci.yml)
+[![CI](https://github.com/forest-rs/chronostore/actions/workflows/ci.yml/badge.svg)](https://github.com/forest-rs/chronostore/actions/workflows/ci.yml)
 [![](https://img.shields.io/crates/v/chronostore.svg)](https://crates.io/crates/chronostore)
 [![docs.rs](https://img.shields.io/docsrs/chronostore)](https://docs.rs/chronostore)
 

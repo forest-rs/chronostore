@@ -9,7 +9,7 @@ members = [
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/endoli/chronostore.rs"
+repository = "https://github.com/forest-rs/chronostore"
 
 [workspace.dependencies]
 chronostore = { path = "crates/chronostore" }
