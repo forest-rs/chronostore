@@ -15,6 +15,7 @@ The wind tunnel starts with million-point baseline measurements for:
 - forward and backward nearest-value lookup over 1M and 10M point chronologies
 - full-range summary queries over 1M and 10M point chronologies
 - 1,024-bucket viewport summaries over 1M and 10M point chronologies
+- retained appends that evict one sealed chunk while keeping 256 sealed chunks
 
 Criterion is scoped to this benchmark crate as a dev-dependency. The core
 `chronostore` crate does not gain benchmark dependencies or dev-dependencies

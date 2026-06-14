@@ -6,7 +6,9 @@
 
 //! Baseline chronology storage benchmarks.
 
-use chronostore::{Chronology, Direction, Entry, NullSummary, SimpleSummary, Summary};
+use chronostore::{
+    Chronology, Direction, Entry, NullSummary, RetentionPolicy, SimpleSummary, Summary,
+};
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 
@@ -16,6 +18,7 @@ const QUERY_SERIES_LENS: &[usize] = &[1_000_000, 10_000_000];
 const QUERY_LEN: usize = 16_384;
 const VIEWPORT_BUCKETS: usize = 1_024;
 const SEED_BATCH_LEN: usize = 65_536;
+const RETENTION_SEALED_CHUNKS: usize = 256;
 
 fn insert_values(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert_values");
@@ -139,6 +142,41 @@ fn range_summaries(c: &mut Criterion) {
     group.finish();
 }
 
+fn retention(c: &mut Criterion) {
+    let mut group = c.benchmark_group("retention");
+    group.throughput(Throughput::Elements(CHUNK_CAPACITY as u64));
+
+    group.bench_function("append_chunk_with_eviction_256", |b| {
+        let mut chronology =
+            Chronology::<f64, SimpleSummary<f64>>::with_chunk_capacity_and_retention(
+                CHUNK_CAPACITY,
+                RetentionPolicy::max_sealed_chunks(RETENTION_SEALED_CHUNKS),
+            );
+        let mut next = 0;
+
+        while chronology.sealed_chunk_count() < RETENTION_SEALED_CHUNKS {
+            let entries = build_entries_range(next, next + CHUNK_CAPACITY);
+            chronology
+                .insert_values(&entries)
+                .expect("timestamps are monotonic");
+            next += CHUNK_CAPACITY;
+        }
+
+        b.iter(|| {
+            let entries = build_entries_range(next, next + CHUNK_CAPACITY);
+            chronology
+                .insert_values(black_box(&entries))
+                .expect("timestamps are monotonic");
+            next += CHUNK_CAPACITY;
+
+            black_box(chronology.sealed_chunk_count());
+            black_box(chronology.summary());
+        });
+    });
+
+    group.finish();
+}
+
 fn seed_chronology<S>(len: usize) -> Chronology<f64, S>
 where
     S: Summary<f64>,
@@ -188,6 +226,6 @@ fn build_queries(len: usize, series_len: u64) -> Vec<u64> {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(10);
-    targets = insert_values, find_nearest_value, range_summaries
+    targets = insert_values, find_nearest_value, range_summaries, retention
 }
 criterion_main!(benches);
