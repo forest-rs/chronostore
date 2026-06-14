@@ -218,6 +218,50 @@ fn codec_range_summaries(c: &mut Criterion) {
             black_box(summaries);
         });
     });
+    group.bench_function("raw_visit_bucketed_summaries_1m", |b| {
+        b.iter(|| {
+            let mut total_len = 0;
+            raw.visit_range_summaries(
+                black_box(0),
+                black_box(end),
+                black_box(VIEWPORT_BUCKETS),
+                |summary| {
+                    total_len += summary.len;
+                    black_box(summary.summary);
+                },
+            );
+            black_box(total_len);
+        });
+    });
+    group.bench_function("gorilla_f64_visit_bucketed_summaries_1m", |b| {
+        b.iter(|| {
+            let mut total_len = 0;
+            gorilla.visit_range_summaries(
+                black_box(0),
+                black_box(end),
+                black_box(VIEWPORT_BUCKETS),
+                |summary| {
+                    total_len += summary.len;
+                    black_box(summary.summary);
+                },
+            );
+            black_box(total_len);
+        });
+    });
+    group.bench_function("raw_range_envelope_1m", |b| {
+        b.iter(|| {
+            let envelope =
+                raw.range_envelope(black_box(0), black_box(end), black_box(VIEWPORT_BUCKETS));
+            black_box(envelope);
+        });
+    });
+    group.bench_function("gorilla_f64_range_envelope_1m", |b| {
+        b.iter(|| {
+            let envelope =
+                gorilla.range_envelope(black_box(0), black_box(end), black_box(VIEWPORT_BUCKETS));
+            black_box(envelope);
+        });
+    });
 
     group.finish();
 }

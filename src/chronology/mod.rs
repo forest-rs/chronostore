@@ -10,7 +10,7 @@ mod range_summary;
 mod retention;
 mod summary_node;
 
-use crate::{Direction, Entry, Summary};
+use crate::{Direction, Entry, EnvelopeBucket, EnvelopeSummary, Summary};
 use alloc::vec::Vec;
 use core::mem;
 
@@ -351,39 +351,91 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
         entries
     }
 
-    /// Return bucketed summaries for a viewport-style range query.
+    /// Return bucketed summaries for a range query.
     ///
     /// The range is half-open: `start` is included and `end` is excluded. At
     /// most `target_buckets` summaries are returned. When the timestamp span is
     /// smaller than `target_buckets`, one bucket per timestamp unit is returned.
-    /// With a min/max summary, the returned buckets can be used as a
-    /// visualization envelope that preserves spikes without decoding every
-    /// sample in the visible range.
+    ///
+    /// This is useful for viewport work because a chart can request roughly one
+    /// bucket per pixel column. With a min/max summary, the returned buckets can
+    /// be used as a visualization envelope that preserves spikes without
+    /// decoding every sample in the visible range.
     pub fn summarize_range(
         &self,
         start: u64,
         end: u64,
         target_buckets: usize,
     ) -> Vec<RangeSummary<S>> {
-        if start >= end || target_buckets == 0 {
-            return Vec::new();
+        let bucket_count = bucket_count(start, end, target_buckets);
+        let mut summaries = Vec::with_capacity(bucket_count);
+        self.visit_range_summaries(start, end, target_buckets, |summary| {
+            summaries.push(summary);
+        });
+        summaries
+    }
+
+    /// Visit bucketed summaries for a range query.
+    ///
+    /// This is the no-allocation form of [`Chronology::summarize_range`]. The
+    /// range is half-open: `start` is included and `end` is excluded.
+    pub fn visit_range_summaries<F>(
+        &self,
+        start: u64,
+        end: u64,
+        target_buckets: usize,
+        mut visit: F,
+    ) where
+        F: FnMut(RangeSummary<S>),
+    {
+        let bucket_count = bucket_count(start, end, target_buckets);
+        if bucket_count == 0 {
+            return;
         }
 
         let span = end - start;
-        let bucket_count = if span < target_buckets as u64 {
-            span as usize
-        } else {
-            target_buckets
-        };
-        let mut summaries = Vec::with_capacity(bucket_count);
 
         for bucket in 0..bucket_count {
             let bucket_start = bucket_boundary(start, span, bucket, bucket_count);
             let bucket_end = bucket_boundary(start, span, bucket + 1, bucket_count);
-            summaries.push(self.range_summary(bucket_start, bucket_end));
+            visit(self.range_summary(bucket_start, bucket_end));
         }
+    }
 
-        summaries
+    /// Return min/max envelope buckets for a range query.
+    ///
+    /// This is an allocating convenience over [`Chronology::visit_range_envelope`].
+    /// Envelope buckets are useful for profiler and telemetry charts because
+    /// each bucket carries the vertical span that should be drawn for that time
+    /// slice.
+    pub fn range_envelope(
+        &self,
+        start: u64,
+        end: u64,
+        target_buckets: usize,
+    ) -> Vec<EnvelopeBucket<V>>
+    where
+        S: EnvelopeSummary<V>,
+    {
+        let bucket_count = bucket_count(start, end, target_buckets);
+        let mut envelope = Vec::with_capacity(bucket_count);
+        self.visit_range_envelope(start, end, target_buckets, |bucket| {
+            envelope.push(bucket);
+        });
+        envelope
+    }
+
+    /// Visit min/max envelope buckets for a range query.
+    ///
+    /// This is the no-allocation form of [`Chronology::range_envelope`].
+    pub fn visit_range_envelope<F>(&self, start: u64, end: u64, target_buckets: usize, mut visit: F)
+    where
+        S: EnvelopeSummary<V>,
+        F: FnMut(EnvelopeBucket<V>),
+    {
+        self.visit_range_summaries(start, end, target_buckets, |summary| {
+            visit(EnvelopeBucket::from_range_summary(summary));
+        });
     }
 
     /// Find the nearest value in time.
@@ -616,4 +668,17 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
 
 fn bucket_boundary(start: u64, span: u64, bucket: usize, bucket_count: usize) -> u64 {
     start + ((u128::from(span) * bucket as u128) / bucket_count as u128) as u64
+}
+
+fn bucket_count(start: u64, end: u64, target_buckets: usize) -> usize {
+    if start >= end || target_buckets == 0 {
+        return 0;
+    }
+
+    let span = end - start;
+    if span < target_buckets as u64 {
+        span as usize
+    } else {
+        target_buckets
+    }
 }

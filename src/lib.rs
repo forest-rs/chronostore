@@ -47,6 +47,7 @@ extern crate alloc;
 
 mod chronology;
 mod entry;
+mod envelope;
 mod null_summary;
 mod simple_summary;
 mod stats_summary;
@@ -59,6 +60,7 @@ pub use self::chronology::{
     RangeSummary, RawCodec, RetentionPolicy, DEFAULT_CHUNK_CAPACITY, SUMMARY_FANOUT,
 };
 pub use self::entry::Entry;
+pub use self::envelope::{EnvelopeBucket, EnvelopeSummary};
 pub use self::null_summary::NullSummary;
 pub use self::simple_summary::SimpleSummary;
 pub use self::stats_summary::StatsSummary;

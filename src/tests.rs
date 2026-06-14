@@ -213,6 +213,74 @@ fn summarizes_viewport_buckets() {
     assert_eq!(summaries[3].len, 4);
     assert_eq!(summaries[3].summary.min, Some(12));
     assert_eq!(summaries[3].summary.max, Some(15));
+
+    let mut visited = Vec::new();
+    chronology.visit_range_summaries(0, 16, 4, |summary| {
+        visited.push((
+            summary.start,
+            summary.end,
+            summary.len,
+            summary.summary.min,
+            summary.summary.max,
+        ));
+    });
+    assert_eq!(
+        visited,
+        vec![
+            (0, 4, 4, Some(0), Some(3)),
+            (4, 8, 4, Some(4), Some(7)),
+            (8, 12, 4, Some(8), Some(11)),
+            (12, 16, 4, Some(12), Some(15)),
+        ]
+    );
+}
+
+#[test]
+fn builds_min_max_range_envelopes() {
+    let mut chronology = Chronology::<u64, StatsSummary<u64>>::with_chunk_capacity(2);
+    let entries = [
+        Entry::new(0, 4),
+        Entry::new(1, 2),
+        Entry::new(2, 9),
+        Entry::new(3, 1),
+        Entry::new(4, 8),
+        Entry::new(5, 5),
+    ];
+    chronology
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    let envelope = chronology.range_envelope(0, 6, 3);
+    assert_eq!(
+        envelope,
+        vec![
+            EnvelopeBucket {
+                start: 0,
+                end: 2,
+                len: 2,
+                min: Some(2),
+                max: Some(4),
+            },
+            EnvelopeBucket {
+                start: 2,
+                end: 4,
+                len: 2,
+                min: Some(1),
+                max: Some(9),
+            },
+            EnvelopeBucket {
+                start: 4,
+                end: 6,
+                len: 2,
+                min: Some(5),
+                max: Some(8),
+            },
+        ]
+    );
+
+    let mut visited = Vec::new();
+    chronology.visit_range_envelope(0, 6, 3, |bucket| visited.push(bucket));
+    assert_eq!(visited, envelope);
 }
 
 #[test]
