@@ -16,6 +16,7 @@ const QUERY_SERIES_LENS: &[usize] = &[1_000_000, 10_000_000];
 const QUERY_LEN: usize = 16_384;
 const VIEWPORT_BUCKETS: usize = 1_024;
 const EXACT_RANGE_LEN: usize = 65_536;
+const RECENT_LEN: usize = 48;
 const LTTB_TARGET_LEN: usize = 1_024;
 const SEED_BATCH_LEN: usize = 65_536;
 const RETENTION_SEALED_CHUNKS: usize = 256;
@@ -291,6 +292,46 @@ fn codec_exact_range_entries(c: &mut Criterion) {
     group.finish();
 }
 
+fn recent_entries(c: &mut Criterion) {
+    let mut group = c.benchmark_group("recent_entries");
+    let raw = seed_chronology_with_codec::<NullSummary<f64>, RawCodec>(BATCH_LEN);
+    let gorilla = seed_chronology_with_codec::<NullSummary<f64>, GorillaF64Codec>(BATCH_LEN);
+    let end = (BATCH_LEN as u64).saturating_mul(16);
+
+    group.throughput(Throughput::Elements(RECENT_LEN as u64));
+    group.bench_function("raw_recent_48_1m", |b| {
+        let mut entries = Vec::with_capacity(RECENT_LEN);
+        b.iter(|| {
+            entries.clear();
+            entries.extend(raw.recent_entries(black_box(RECENT_LEN)));
+            black_box(&entries);
+        });
+    });
+    group.bench_function("gorilla_f64_recent_48_1m", |b| {
+        let mut entries = Vec::with_capacity(RECENT_LEN);
+        b.iter(|| {
+            entries.clear();
+            entries.extend(gorilla.recent_entries(black_box(RECENT_LEN)));
+            black_box(&entries);
+        });
+    });
+
+    group.throughput(Throughput::Elements(BATCH_LEN as u64));
+    group.bench_function("raw_full_range_collect_drain_48_1m", |b| {
+        let mut entries = Vec::with_capacity(BATCH_LEN);
+        b.iter(|| {
+            entries.clear();
+            entries.extend(raw.entries_in_range(black_box(0), black_box(end)));
+            if entries.len() > RECENT_LEN {
+                entries.drain(0..entries.len() - RECENT_LEN);
+            }
+            black_box(&entries);
+        });
+    });
+
+    group.finish();
+}
+
 fn retention(c: &mut Criterion) {
     let mut group = c.benchmark_group("retention");
     group.throughput(Throughput::Elements(CHUNK_CAPACITY as u64));
@@ -447,6 +488,6 @@ criterion_group! {
     config = Criterion::default().sample_size(10);
     targets = insert_values, find_nearest_value, range_summaries, codec_storage,
         codec_find_nearest_value, codec_range_summaries, codec_exact_range_entries,
-        retention, lttb_downsampling
+        recent_entries, retention, lttb_downsampling
 }
 criterion_main!(benches);

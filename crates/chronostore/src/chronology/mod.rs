@@ -334,6 +334,35 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
         EntriesInRange::new(self, start, end)
     }
 
+    /// Return the most recent entries in chronological order.
+    ///
+    /// This iterator yields at most `max_entries` retained samples, ordered
+    /// oldest to newest. It does not allocate and it skips chunks that cannot
+    /// contribute to the result. Callers that need owned storage can collect
+    /// into a reusable buffer.
+    ///
+    /// ```
+    /// use chronostore::{Chronology, Entry, NullSummary};
+    ///
+    /// let mut series = Chronology::<u64, NullSummary<u64>>::with_chunk_capacity(2);
+    /// series
+    ///     .insert_values(&[
+    ///         Entry::new(0, 10),
+    ///         Entry::new(1, 20),
+    ///         Entry::new(2, 30),
+    ///     ])
+    ///     .expect("timestamps are monotonic");
+    ///
+    /// let values = series
+    ///     .recent_entries(2)
+    ///     .map(|entry| entry.value)
+    ///     .collect::<Vec<_>>();
+    /// assert_eq!(values, vec![20, 30]);
+    /// ```
+    pub fn recent_entries(&self, max_entries: usize) -> impl Iterator<Item = Entry<V>> + '_ {
+        RecentEntries::new(self, max_entries)
+    }
+
     /// Return bucketed summaries for a range query.
     ///
     /// The range is half-open: `start` is included and `end` is excluded. At
@@ -712,6 +741,126 @@ where
             self.current_entries = Some(chunk.entries(self.start, self.end));
         }
     }
+}
+
+struct RecentEntries<'a, V, S, C>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
+    chronology: &'a Chronology<V, S, C>,
+    chunk_index: usize,
+    first_chunk_index: usize,
+    first_entry_index: usize,
+    remaining: usize,
+    current_entries: Option<ChunkEntries<'a, V, C>>,
+}
+
+impl<'a, V, S, C> RecentEntries<'a, V, S, C>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
+    fn new(chronology: &'a Chronology<V, S, C>, max_entries: usize) -> Self {
+        let Some((first_chunk_index, first_entry_index)) =
+            recent_start_position(chronology, max_entries)
+        else {
+            return RecentEntries {
+                chronology,
+                chunk_index: chronology.chunk_count(),
+                first_chunk_index: chronology.chunk_count(),
+                first_entry_index: 0,
+                remaining: 0,
+                current_entries: None,
+            };
+        };
+
+        let remaining = max_entries.min(chronology.len());
+        RecentEntries {
+            chronology,
+            chunk_index: first_chunk_index,
+            first_chunk_index,
+            first_entry_index,
+            remaining,
+            current_entries: None,
+        }
+    }
+}
+
+impl<'a, V, S, C> Iterator for RecentEntries<'a, V, S, C>
+where
+    V: Copy + 'a,
+    S: Summary<V>,
+    C: ChunkCodec<V> + 'a,
+{
+    type Item = Entry<V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(entries) = &mut self.current_entries {
+                if let Some(entry) = entries.next() {
+                    self.remaining -= 1;
+                    return Some(entry);
+                }
+                self.current_entries = None;
+            }
+
+            if self.chunk_index >= self.chronology.chunk_count() {
+                return None;
+            }
+
+            let chunk = self.chronology.chunk(self.chunk_index);
+            let start_index = if self.chunk_index == self.first_chunk_index {
+                self.first_entry_index
+            } else {
+                0
+            };
+            self.chunk_index += 1;
+            self.current_entries = Some(chunk.entries_from_index(start_index));
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'a, V, S, C> ExactSizeIterator for RecentEntries<'a, V, S, C>
+where
+    V: Copy + 'a,
+    S: Summary<V>,
+    C: ChunkCodec<V> + 'a,
+{
+}
+
+fn recent_start_position<V, S, C>(
+    chronology: &Chronology<V, S, C>,
+    max_entries: usize,
+) -> Option<(usize, usize)>
+where
+    V: Copy,
+    S: Summary<V>,
+    C: ChunkCodec<V>,
+{
+    let mut remaining = max_entries.min(chronology.len());
+    if remaining == 0 {
+        return None;
+    }
+
+    let mut chunk_index = chronology.chunk_count();
+    while chunk_index > 0 {
+        let previous_chunk_index = chunk_index - 1;
+        let chunk = chronology.chunk(previous_chunk_index);
+        if remaining <= chunk.len() {
+            return Some((previous_chunk_index, chunk.len() - remaining));
+        }
+        remaining -= chunk.len();
+        chunk_index = previous_chunk_index;
+    }
+
+    None
 }
 
 struct BucketedSummaries<'a, V, S, C>

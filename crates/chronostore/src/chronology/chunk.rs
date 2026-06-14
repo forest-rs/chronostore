@@ -52,6 +52,19 @@ impl<'a, V: Copy> OpenEntries<'a, V> {
             end: range.end,
         }
     }
+
+    fn from_index<S>(chunk: &'a OpenChunk<V, S>, start_index: usize) -> Self
+    where
+        S: Summary<V>,
+    {
+        let start_index = start_index.min(chunk.timestamps.len());
+        OpenEntries {
+            timestamps: &chunk.timestamps,
+            values: &chunk.values,
+            index: start_index,
+            end: chunk.timestamps.len(),
+        }
+    }
 }
 
 impl<V: Copy> Iterator for OpenEntries<'_, V> {
@@ -197,6 +210,10 @@ impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
         OpenEntries::new(self, start, end)
     }
 
+    pub(super) fn entries_from_index(&self, start_index: usize) -> OpenEntries<'_, V> {
+        OpenEntries::from_index(self, start_index)
+    }
+
     pub(super) fn entry(&self, index: usize) -> Entry<V> {
         Entry::new(self.timestamps[index], self.values[index])
     }
@@ -268,6 +285,10 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> ClosedChunk<V, S, C> {
 
     pub(super) fn entries(&self, start: u64, end: u64) -> C::Entries<'_> {
         C::entries(&self.encoded, start, end)
+    }
+
+    pub(super) fn entries_from_index(&self, start_index: usize) -> C::Entries<'_> {
+        C::entries_from_index(&self.encoded, start_index)
     }
 
     pub(super) fn add_range_summary(
@@ -472,6 +493,13 @@ impl<'a, V: Copy, S: Summary<V>, C: ChunkCodec<V>> ChunkRef<'a, V, S, C> {
         match self {
             ChunkRef::Closed(chunk) => ChunkEntries::Closed(chunk.entries(start, end)),
             ChunkRef::Open(chunk) => ChunkEntries::Open(chunk.entries(start, end)),
+        }
+    }
+
+    pub(super) fn entries_from_index(&self, start_index: usize) -> ChunkEntries<'a, V, C> {
+        match self {
+            ChunkRef::Closed(chunk) => ChunkEntries::Closed(chunk.entries_from_index(start_index)),
+            ChunkRef::Open(chunk) => ChunkEntries::Open(chunk.entries_from_index(start_index)),
         }
     }
 
