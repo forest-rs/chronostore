@@ -17,6 +17,12 @@ const GORILLA_ANCHOR_STRIDE: usize = 64;
 /// chronology still owns append order, retention, chunk summaries, and range
 /// semantics.
 pub trait ChunkCodec<V: Copy> {
+    /// Number of entries covered by one sealed-chunk summary tile.
+    ///
+    /// Codecs with periodic decoder anchors should generally use the same
+    /// stride here so summary tiles and exact-decode restart points align.
+    const SUMMARY_TILE_CAPACITY: usize;
+
     /// Encoded representation stored inside each sealed chunk.
     type Encoded;
 
@@ -57,6 +63,8 @@ pub struct RawEncodedChunk<V: Copy> {
 }
 
 impl<V: Copy> ChunkCodec<V> for RawCodec {
+    const SUMMARY_TILE_CAPACITY: usize = 64;
+
     type Encoded = RawEncodedChunk<V>;
 
     fn encode(timestamps: Vec<u64>, values: Vec<V>) -> Self::Encoded {
@@ -119,6 +127,8 @@ pub struct GorillaF64EncodedChunk {
 }
 
 impl ChunkCodec<f64> for GorillaF64Codec {
+    const SUMMARY_TILE_CAPACITY: usize = GORILLA_ANCHOR_STRIDE;
+
     type Encoded = GorillaF64EncodedChunk;
 
     fn encode(timestamps: Vec<u64>, values: Vec<f64>) -> Self::Encoded {

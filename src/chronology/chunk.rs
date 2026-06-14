@@ -62,6 +62,8 @@ impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
         let start = self.timestamps[0];
         let end = self.timestamps[self.timestamps.len() - 1];
         let len = self.timestamps.len();
+        let summary_tiles =
+            build_summary_tiles::<V, S>(&self.timestamps, &self.values, C::SUMMARY_TILE_CAPACITY);
         let encoded = C::encode(self.timestamps, self.values);
 
         ClosedChunk {
@@ -69,6 +71,7 @@ impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
             end,
             len,
             summary: self.summary,
+            summary_tiles,
             encoded,
             codec: PhantomData,
         }
@@ -162,6 +165,7 @@ pub(super) struct ClosedChunk<V: Copy, S: Summary<V>, C: ChunkCodec<V>> {
     end: u64,
     len: usize,
     pub(super) summary: S,
+    summary_tiles: Vec<SummaryNode<S>>,
     encoded: C::Encoded,
     codec: PhantomData<(V, C)>,
 }
@@ -215,8 +219,82 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> ClosedChunk<V, S, C> {
         end: u64,
         range_summary: &mut RangeSummary<S>,
     ) {
-        C::add_range_summary(&self.encoded, start, end, range_summary);
+        let Some(mut tile_index) = self.first_tile_with_end_at_least(start) else {
+            return;
+        };
+
+        while let Some(tile) = self.summary_tiles.get(tile_index) {
+            if tile.start >= end {
+                break;
+            }
+
+            if tile.start >= start && tile.end < end {
+                range_summary.add_summary::<V>(tile.len, &tile.summary);
+            } else {
+                let partial_start = start.max(tile.start);
+                let partial_end = end.min(tile.end.saturating_add(1));
+                C::add_range_summary(&self.encoded, partial_start, partial_end, range_summary);
+            }
+
+            tile_index += 1;
+        }
     }
+
+    fn first_tile_with_end_at_least(&self, timestamp: u64) -> Option<usize> {
+        let mut left = 0;
+        let mut right = self.summary_tiles.len();
+
+        while left < right {
+            let mid = left + ((right - left) / 2);
+            if self.summary_tiles[mid].end < timestamp {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+
+        (left < self.summary_tiles.len()).then_some(left)
+    }
+}
+
+fn build_summary_tiles<V, S>(
+    timestamps: &[u64],
+    values: &[V],
+    tile_capacity: usize,
+) -> Vec<SummaryNode<S>>
+where
+    V: Copy,
+    S: Summary<V>,
+{
+    debug_assert_eq!(timestamps.len(), values.len());
+    debug_assert!(tile_capacity > 0);
+
+    let tile_capacity = tile_capacity.max(1);
+    let tile_count = timestamps.len().div_ceil(tile_capacity);
+    let mut tiles = Vec::with_capacity(tile_count);
+    let mut start_index = 0;
+
+    while start_index < timestamps.len() {
+        let end_index = start_index
+            .saturating_add(tile_capacity)
+            .min(timestamps.len());
+        let mut summary = S::default();
+
+        for index in start_index..end_index {
+            summary.update(&Entry::new(timestamps[index], values[index]));
+        }
+
+        tiles.push(SummaryNode {
+            start: timestamps[start_index],
+            end: timestamps[end_index - 1],
+            len: end_index - start_index,
+            summary,
+        });
+
+        start_index = end_index;
+    }
+
+    tiles
 }
 
 #[derive(Clone, Copy)]

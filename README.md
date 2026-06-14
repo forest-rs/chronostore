@@ -60,9 +60,11 @@ usable yet as some of the basic functionality is being written.
 The current direction is a Gorilla-inspired in-memory model: monotonic samples
 are appended into an open chunk, each chunk maintains summary state, lookup uses
 chunk boundaries before searching within a chunk, and sealed chunks feed a
-summary pyramid for range and viewport queries. Raw sealed chunks are the
-default storage codec. A Gorilla-inspired `f64` codec is available for comparing
-compressed sealed chunks against the raw baseline.
+summary pyramid for range and viewport queries. Sealed chunks also keep
+timestamped summary tiles so partial range and viewport queries can merge full
+tiles and decode only the edges. Raw sealed chunks are the default storage
+codec. A Gorilla-inspired `f64` codec is available for comparing compressed
+sealed chunks against the raw baseline.
 
 ## Benchmarks
 

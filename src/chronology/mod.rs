@@ -205,7 +205,8 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     /// Return the total encoded payload size for sealed chunks, in bytes.
     ///
     /// This excludes allocator capacity, chunk metadata, open chunk storage,
-    /// and summary-pyramid nodes. It is intended for codec comparisons.
+    /// summary tiles, and summary-pyramid nodes. It is intended for codec
+    /// comparisons.
     pub fn sealed_encoded_size(&self) -> usize {
         self.sealed_chunks
             .iter()
