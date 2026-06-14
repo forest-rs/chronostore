@@ -7,6 +7,7 @@
 mod chunk;
 mod codec;
 mod range_summary;
+mod retention;
 mod summary_node;
 
 use crate::{Direction, Entry, Summary};
@@ -18,6 +19,7 @@ use self::summary_node::SummaryNode;
 
 pub use self::chunk::ChunkSummary;
 pub use self::range_summary::RangeSummary;
+pub use self::retention::RetentionPolicy;
 pub use self::summary_node::SUMMARY_FANOUT;
 
 /// Default number of entries stored in each raw chronology chunk.
@@ -112,6 +114,7 @@ pub struct Chronology<V: Copy, S: Summary<V>> {
     summary_levels: Vec<Vec<SummaryNode<S>>>,
     summary: S,
     chunk_capacity: usize,
+    retention_policy: RetentionPolicy,
     len: usize,
 }
 
@@ -133,6 +136,23 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
     ///
     /// Panics when `chunk_capacity` is zero.
     pub fn with_chunk_capacity(chunk_capacity: usize) -> Self {
+        Self::with_chunk_capacity_and_retention(chunk_capacity, RetentionPolicy::unbounded())
+    }
+
+    /// Create a new [`Chronology`] with a retention policy.
+    pub fn with_retention_policy(retention_policy: RetentionPolicy) -> Self {
+        Self::with_chunk_capacity_and_retention(DEFAULT_CHUNK_CAPACITY, retention_policy)
+    }
+
+    /// Create a new [`Chronology`] with a custom chunk capacity and retention policy.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `chunk_capacity` is zero.
+    pub fn with_chunk_capacity_and_retention(
+        chunk_capacity: usize,
+        retention_policy: RetentionPolicy,
+    ) -> Self {
         assert!(chunk_capacity > 0, "chunk capacity must be non-zero");
         Chronology {
             sealed_chunks: Vec::new(),
@@ -140,6 +160,7 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
             summary_levels: Vec::new(),
             summary: S::default(),
             chunk_capacity,
+            retention_policy,
             len: 0,
         }
     }
@@ -157,6 +178,17 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
     /// Return the configured entry capacity for each chunk.
     pub fn chunk_capacity(&self) -> usize {
         self.chunk_capacity
+    }
+
+    /// Return the current retention policy.
+    pub fn retention_policy(&self) -> RetentionPolicy {
+        self.retention_policy
+    }
+
+    /// Set the retention policy and immediately enforce it.
+    pub fn set_retention_policy(&mut self, retention_policy: RetentionPolicy) {
+        self.retention_policy = retention_policy;
+        self.enforce_retention();
     }
 
     /// Return the number of sealed chunks.
@@ -355,6 +387,7 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
         let summary_node = sealed_chunk.summary_node();
         self.sealed_chunks.push(sealed_chunk);
         self.push_summary_node(0, summary_node);
+        self.enforce_retention();
     }
 
     fn find_forward(&self, timestamp: u64) -> Option<Entry<V>> {
@@ -436,6 +469,44 @@ impl<V: Copy, S: Summary<V>> Chronology<V, S> {
             );
             self.push_summary_node(level + 1, parent);
         }
+    }
+
+    fn enforce_retention(&mut self) {
+        let Some(max_sealed_chunks) = self.retention_policy.sealed_chunk_limit() else {
+            return;
+        };
+        let evict_count = self.sealed_chunks.len().saturating_sub(max_sealed_chunks);
+        if evict_count == 0 {
+            return;
+        }
+
+        let evicted_len = self
+            .sealed_chunks
+            .iter()
+            .take(evict_count)
+            .map(ClosedRawChunk::len)
+            .sum::<usize>();
+
+        self.sealed_chunks.drain(0..evict_count);
+        self.len -= evicted_len;
+        self.rebuild_summary_state();
+    }
+
+    fn rebuild_summary_state(&mut self) {
+        self.summary_levels.clear();
+        for index in 0..self.sealed_chunks.len() {
+            let node = self.sealed_chunks[index].summary_node();
+            self.push_summary_node(0, node);
+        }
+
+        let mut summary = S::default();
+        for chunk in &self.sealed_chunks {
+            summary.merge(&chunk.summary);
+        }
+        if !self.open_chunk.is_empty() {
+            summary.merge(&self.open_chunk.summary);
+        }
+        self.summary = summary;
     }
 
     fn add_sealed_chunk_range(

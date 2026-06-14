@@ -186,3 +186,56 @@ fn summarizes_viewport_buckets() {
     assert_eq!(summaries[3].summary.min, Some(12));
     assert_eq!(summaries[3].summary.max, Some(15));
 }
+
+#[test]
+fn retention_keeps_latest_sealed_chunks() {
+    let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity_and_retention(
+        2,
+        RetentionPolicy::max_sealed_chunks(2),
+    );
+    let entries = (0..10)
+        .map(|value| Entry::new(value, value))
+        .collect::<Vec<_>>();
+    chronology
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert_eq!(chronology.len(), 4);
+    assert_eq!(chronology.sealed_chunk_count(), 2);
+    assert_eq!(chronology.chunk_count(), 2);
+    assert_eq!(
+        chronology.find_nearest_value(5, Direction::Forward),
+        Some(Entry::new(6, 6))
+    );
+    assert_eq!(chronology.find_nearest_value(5, Direction::Backward), None);
+    assert_eq!(chronology.summary().min, Some(6));
+    assert_eq!(chronology.summary().max, Some(9));
+}
+
+#[test]
+fn setting_retention_rebuilds_summaries_and_keeps_open_chunk() {
+    let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity(2);
+    let entries = (0..9)
+        .map(|value| Entry::new(value, value))
+        .collect::<Vec<_>>();
+    chronology
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    chronology.set_retention_policy(RetentionPolicy::max_sealed_chunks(2));
+
+    assert_eq!(chronology.len(), 5);
+    assert_eq!(chronology.sealed_chunk_count(), 2);
+    assert_eq!(chronology.chunk_count(), 3);
+    assert_eq!(
+        chronology.find_nearest_value(0, Direction::Forward),
+        Some(Entry::new(4, 4))
+    );
+    assert_eq!(chronology.summary().min, Some(4));
+    assert_eq!(chronology.summary().max, Some(8));
+
+    let summary = chronology.range_summary(0, 9);
+    assert_eq!(summary.len, 5);
+    assert_eq!(summary.summary.min, Some(4));
+    assert_eq!(summary.summary.max, Some(8));
+}
