@@ -64,7 +64,8 @@ summary pyramid for range and viewport queries. Sealed chunks also keep
 timestamped summary tiles so partial range and viewport queries can merge full
 tiles and decode only the edges. Raw sealed chunks are the default storage
 codec. A Gorilla-inspired `f64` codec is available for comparing compressed
-sealed chunks against the raw baseline.
+sealed chunks against the raw baseline. Exact entry ranges are available for
+inspection, export, and display algorithms that need raw samples.
 
 ## Benchmarks
 
@@ -75,7 +76,8 @@ cargo bench -p wind_tunnel
 ```
 
 It includes million-point insert, lookup, range-summary, viewport-summary,
-retention, and raw-vs-Gorilla codec baselines for the chunked storage model.
+exact-range, retention, and raw-vs-Gorilla codec baselines for the chunked
+storage model.
 
 ## Contribution
 

@@ -298,11 +298,67 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
         range_summary
     }
 
+    /// Visit exact entries whose timestamps are in `start..end`.
+    ///
+    /// The range is half-open: `start` is included and `end` is excluded. This
+    /// method does not allocate and is intended for callers that need exact
+    /// samples for inspection, export, or display algorithms such as LTTB.
+    ///
+    /// ```
+    /// use chronostore::{Chronology, Entry, NullSummary};
+    ///
+    /// let mut chrono = Chronology::<u64, NullSummary<u64>>::new();
+    /// chrono.insert_values(&[Entry::new(0, 10),
+    ///                        Entry::new(5, 20),
+    ///                        Entry::new(9, 30)])
+    ///       .expect("timestamps are monotonic");
+    ///
+    /// let mut values = Vec::new();
+    /// chrono.visit_range_entries(1, 10, |entry| values.push(entry.value));
+    /// assert_eq!(values, vec![20, 30]);
+    /// ```
+    pub fn visit_range_entries<F>(&self, start: u64, end: u64, mut visit: F)
+    where
+        F: FnMut(Entry<V>),
+    {
+        if start >= end {
+            return;
+        }
+
+        let Some(mut chunk_index) = self.first_chunk_with_end_at_least(start) else {
+            return;
+        };
+
+        while chunk_index < self.chunk_count() {
+            let chunk = self.chunk(chunk_index);
+            if chunk.start_timestamp() >= end {
+                break;
+            }
+
+            chunk.visit_range_entries(start, end, &mut visit);
+            chunk_index += 1;
+        }
+    }
+
+    /// Return exact entries whose timestamps are in `start..end`.
+    ///
+    /// The range is half-open: `start` is included and `end` is excluded. Use
+    /// [`Chronology::visit_range_entries`] when the caller can consume entries
+    /// without allocating.
+    pub fn entries_in_range(&self, start: u64, end: u64) -> Vec<Entry<V>> {
+        let mut entries = Vec::new();
+        self.visit_range_entries(start, end, |entry| entries.push(entry));
+        entries
+    }
+
     /// Return bucketed summaries for a viewport-style range query.
     ///
     /// The range is half-open: `start` is included and `end` is excluded. At
     /// most `target_buckets` summaries are returned. When the timestamp span is
     /// smaller than `target_buckets`, one bucket per timestamp unit is returned.
+    /// With a min/max summary, the returned buckets can be used as a
+    /// visualization envelope that preserves spikes without decoding every
+    /// sample in the visible range.
     pub fn summarize_range(
         &self,
         start: u64,

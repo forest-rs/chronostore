@@ -18,6 +18,7 @@ const BATCH_LEN: usize = 1_000_000;
 const QUERY_SERIES_LENS: &[usize] = &[1_000_000, 10_000_000];
 const QUERY_LEN: usize = 16_384;
 const VIEWPORT_BUCKETS: usize = 1_024;
+const EXACT_RANGE_LEN: usize = 65_536;
 const SEED_BATCH_LEN: usize = 65_536;
 const RETENTION_SEALED_CHUNKS: usize = 256;
 
@@ -221,6 +222,40 @@ fn codec_range_summaries(c: &mut Criterion) {
     group.finish();
 }
 
+fn codec_exact_range_entries(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codec_exact_range_entries");
+    let raw = seed_chronology_with_codec::<NullSummary<f64>, RawCodec>(BATCH_LEN);
+    let gorilla = seed_chronology_with_codec::<NullSummary<f64>, GorillaF64Codec>(BATCH_LEN);
+    let start = ((BATCH_LEN - EXACT_RANGE_LEN) as u64 / 2).saturating_mul(16);
+    let end = start + (EXACT_RANGE_LEN as u64).saturating_mul(16);
+
+    group.throughput(Throughput::Elements(EXACT_RANGE_LEN as u64));
+    group.bench_function("raw_visit_65536", |b| {
+        b.iter(|| {
+            let mut count = 0;
+            let mut sum = 0.0;
+            raw.visit_range_entries(black_box(start), black_box(end), |entry| {
+                count += 1;
+                sum += entry.value;
+            });
+            black_box((count, sum));
+        });
+    });
+    group.bench_function("gorilla_f64_visit_65536", |b| {
+        b.iter(|| {
+            let mut count = 0;
+            let mut sum = 0.0;
+            gorilla.visit_range_entries(black_box(start), black_box(end), |entry| {
+                count += 1;
+                sum += entry.value;
+            });
+            black_box((count, sum));
+        });
+    });
+
+    group.finish();
+}
+
 fn retention(c: &mut Criterion) {
     let mut group = c.benchmark_group("retention");
     group.throughput(Throughput::Elements(CHUNK_CAPACITY as u64));
@@ -314,6 +349,7 @@ criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(10);
     targets = insert_values, find_nearest_value, range_summaries, codec_storage,
-        codec_find_nearest_value, codec_range_summaries, retention
+        codec_find_nearest_value, codec_range_summaries, codec_exact_range_entries,
+        retention
 }
 criterion_main!(benches);

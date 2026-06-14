@@ -43,6 +43,11 @@ pub trait ChunkCodec<V: Copy> {
     /// Return the last entry at or before `timestamp`.
     fn entry_at_or_before(encoded: &Self::Encoded, timestamp: u64) -> Option<Entry<V>>;
 
+    /// Visit every entry whose timestamp is in `start..end`.
+    fn visit_range_entries<F>(encoded: &Self::Encoded, start: u64, end: u64, visit: &mut F)
+    where
+        F: FnMut(Entry<V>);
+
     /// Add the entries in `start..end` to `range_summary`.
     fn add_range_summary<S: Summary<V>>(
         encoded: &Self::Encoded,
@@ -85,6 +90,18 @@ impl<V: Copy> ChunkCodec<V> for RawCodec {
         Some(entry(encoded, index))
     }
 
+    fn visit_range_entries<F>(encoded: &Self::Encoded, start: u64, end: u64, visit: &mut F)
+    where
+        F: FnMut(Entry<V>),
+    {
+        let start_index = lower_bound(&encoded.timestamps, start);
+        let end_index = lower_bound(&encoded.timestamps, end);
+
+        for index in start_index..end_index {
+            visit(entry(encoded, index));
+        }
+    }
+
     fn add_range_summary<S: Summary<V>>(
         encoded: &Self::Encoded,
         start: u64,
@@ -98,9 +115,7 @@ impl<V: Copy> ChunkCodec<V> for RawCodec {
         }
 
         let mut summary = S::default();
-        for index in start_index..end_index {
-            summary.update(&entry(encoded, index));
-        }
+        Self::visit_range_entries(encoded, start, end, &mut |entry| summary.update(&entry));
         range_summary.add_summary::<V>(end_index - start_index, &summary);
     }
 }
@@ -179,6 +194,20 @@ impl ChunkCodec<f64> for GorillaF64Codec {
         previous
     }
 
+    fn visit_range_entries<F>(encoded: &Self::Encoded, start: u64, end: u64, visit: &mut F)
+    where
+        F: FnMut(Entry<f64>),
+    {
+        for entry in entry_iter_at_or_before(encoded, start) {
+            if entry.timestamp >= end {
+                break;
+            }
+            if entry.timestamp >= start {
+                visit(entry);
+            }
+        }
+    }
+
     fn add_range_summary<S: Summary<f64>>(
         encoded: &Self::Encoded,
         start: u64,
@@ -188,15 +217,10 @@ impl ChunkCodec<f64> for GorillaF64Codec {
         let mut summary = S::default();
         let mut len = 0;
 
-        for entry in entry_iter_at_or_before(encoded, start) {
-            if entry.timestamp >= end {
-                break;
-            }
-            if entry.timestamp >= start {
-                summary.update(&entry);
-                len += 1;
-            }
-        }
+        Self::visit_range_entries(encoded, start, end, &mut |entry| {
+            summary.update(&entry);
+            len += 1;
+        });
 
         range_summary.add_summary::<f64>(len, &summary);
     }

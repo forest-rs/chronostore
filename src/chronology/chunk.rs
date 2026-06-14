@@ -144,6 +144,15 @@ impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
         range_summary.add_summary::<V>(len, &summary);
     }
 
+    pub(super) fn visit_range_entries<F>(&self, start: u64, end: u64, visit: &mut F)
+    where
+        F: FnMut(Entry<V>),
+    {
+        for index in self.range_indices(start, end) {
+            visit(self.entry(index));
+        }
+    }
+
     pub(super) fn entry(&self, index: usize) -> Entry<V> {
         Entry::new(self.timestamps[index], self.values[index])
     }
@@ -211,6 +220,13 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> ClosedChunk<V, S, C> {
 
     pub(super) fn entry_at_or_before(&self, timestamp: u64) -> Option<Entry<V>> {
         C::entry_at_or_before(&self.encoded, timestamp)
+    }
+
+    pub(super) fn visit_range_entries<F>(&self, start: u64, end: u64, visit: &mut F)
+    where
+        F: FnMut(Entry<V>),
+    {
+        C::visit_range_entries(&self.encoded, start, end, visit);
     }
 
     pub(super) fn add_range_summary(
@@ -348,6 +364,16 @@ impl<'a, V: Copy, S: Summary<V>, C: ChunkCodec<V>> ChunkRef<'a, V, S, C> {
         match self {
             ChunkRef::Closed(chunk) => chunk.add_range_summary(start, end, range_summary),
             ChunkRef::Open(chunk) => chunk.add_range_summary(start, end, range_summary),
+        }
+    }
+
+    pub(super) fn visit_range_entries<F>(&self, start: u64, end: u64, visit: &mut F)
+    where
+        F: FnMut(Entry<V>),
+    {
+        match self {
+            ChunkRef::Closed(chunk) => chunk.visit_range_entries(start, end, visit),
+            ChunkRef::Open(chunk) => chunk.visit_range_entries(start, end, visit),
         }
     }
 

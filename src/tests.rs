@@ -5,6 +5,7 @@
 // except according to those terms.
 
 use crate::*;
+use alloc::vec;
 use alloc::vec::Vec;
 
 #[test]
@@ -188,6 +189,34 @@ fn summarizes_viewport_buckets() {
 }
 
 #[test]
+fn returns_exact_entries_in_half_open_ranges() {
+    let mut chronology = Chronology::<u64, NullSummary<u64>>::with_chunk_capacity(3);
+    let entries = (0..8)
+        .map(|value| Entry::new(value * 10, value))
+        .collect::<Vec<_>>();
+    chronology
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert_eq!(
+        chronology.entries_in_range(10, 61),
+        vec![
+            Entry::new(10, 1),
+            Entry::new(20, 2),
+            Entry::new(30, 3),
+            Entry::new(40, 4),
+            Entry::new(50, 5),
+            Entry::new(60, 6),
+        ]
+    );
+    assert_eq!(chronology.entries_in_range(60, 60), Vec::new());
+
+    let mut visited = Vec::new();
+    chronology.visit_range_entries(65, 100, |entry| visited.push(entry));
+    assert_eq!(visited, vec![Entry::new(70, 7)]);
+}
+
+#[test]
 fn retention_keeps_latest_sealed_chunks() {
     let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity_and_retention(
         2,
@@ -337,4 +366,9 @@ fn gorilla_f64_codec_matches_raw_queries_after_decoder_anchors() {
     assert_eq!(raw_summary.len, gorilla_summary.len);
     assert_eq!(raw_summary.summary.min, gorilla_summary.summary.min);
     assert_eq!(raw_summary.summary.max, gorilla_summary.summary.max);
+
+    assert_eq!(
+        raw.entries_in_range(start, end),
+        gorilla.entries_in_range(start, end)
+    );
 }
