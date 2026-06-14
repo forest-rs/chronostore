@@ -27,10 +27,10 @@
 //! ## Implementation Status
 //!
 //! Chronostore stores monotonic samples in chunks, maintains mergeable summary
-//! state, supports exact range access, supports bucketed range summaries for
-//! zoomed views, and provides display helpers such as min/max envelopes and
-//! LTTB over decoded entries. Raw sealed chunks are the default storage codec;
-//! [`GorillaF64Codec`] is available for compression experiments.
+//! state, supports exact range and recent-tail access, supports bucketed range
+//! summaries for zoomed views, and provides display helpers such as min/max
+//! envelopes and LTTB over decoded entries. Raw sealed chunks are the default
+//! storage codec; [`GorillaF64Codec`] is available for compression experiments.
 //!
 //! ## Basic Use
 //!
@@ -57,6 +57,9 @@
 //! let summary = series.range_summary(0, 11);
 //! assert_eq!(summary.len, 3);
 //! assert_eq!(summary.summary.max, Some(2.5));
+//!
+//! let recent = series.recent_entries(2).collect::<Vec<_>>();
+//! assert_eq!(recent, vec![Entry::new(5, 2.5), Entry::new(10, 2.0)]);
 //! ```
 //!
 //! ## Display Queries

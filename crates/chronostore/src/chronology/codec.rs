@@ -59,6 +59,14 @@ pub trait ChunkCodec<V: Copy> {
     /// Return exact entries whose timestamps are in `start..end`.
     fn entries<'a>(encoded: &'a Self::Encoded, start: u64, end: u64) -> Self::Entries<'a>;
 
+    /// Return exact entries starting at `start_index`.
+    ///
+    /// `start_index` is a sample index within this sealed chunk, not a
+    /// timestamp. This supports tail queries that need the last `N` retained
+    /// samples without scanning earlier chunks and without relying on a
+    /// timestamp sentinel.
+    fn entries_from_index<'a>(encoded: &'a Self::Encoded, start_index: usize) -> Self::Entries<'a>;
+
     /// Add the entries in `start..end` to `range_summary`.
     fn add_range_summary<S>(
         encoded: &Self::Encoded,
@@ -138,6 +146,16 @@ impl<'a, V: Copy> RawEntries<'a, V> {
             end: end_index,
         }
     }
+
+    fn from_index(encoded: &'a RawEncodedChunk<V>, start_index: usize) -> Self {
+        let start_index = start_index.min(encoded.timestamps.len());
+        RawEntries {
+            timestamps: &encoded.timestamps,
+            values: &encoded.values,
+            index: start_index,
+            end: encoded.timestamps.len(),
+        }
+    }
 }
 
 impl<V: Copy> Iterator for RawEntries<'_, V> {
@@ -201,6 +219,10 @@ impl<V: Copy> ChunkCodec<V> for RawCodec {
     fn entries<'a>(encoded: &'a Self::Encoded, start: u64, end: u64) -> Self::Entries<'a> {
         RawEntries::new(encoded, start, end)
     }
+
+    fn entries_from_index<'a>(encoded: &'a Self::Encoded, start_index: usize) -> Self::Entries<'a> {
+        RawEntries::from_index(encoded, start_index)
+    }
 }
 
 /// Gorilla-inspired codec for `f64` sealed chunks.
@@ -255,6 +277,7 @@ pub struct GorillaF64Entries<'a> {
     start: u64,
     end: u64,
     done: bool,
+    filter_range: bool,
 }
 
 impl core::fmt::Debug for GorillaF64Entries<'_> {
@@ -263,6 +286,7 @@ impl core::fmt::Debug for GorillaF64Entries<'_> {
             .field("start", &self.start)
             .field("end", &self.end)
             .field("done", &self.done)
+            .field("filter_range", &self.filter_range)
             .finish_non_exhaustive()
     }
 }
@@ -274,6 +298,17 @@ impl<'a> GorillaF64Entries<'a> {
             start,
             end,
             done: start >= end,
+            filter_range: true,
+        }
+    }
+
+    fn from_index(encoded: &'a GorillaF64EncodedChunk, start_index: usize) -> Self {
+        GorillaF64Entries {
+            inner: entry_iter_from_index(encoded, start_index),
+            start: 0,
+            end: 0,
+            done: false,
+            filter_range: false,
         }
     }
 }
@@ -284,6 +319,10 @@ impl Iterator for GorillaF64Entries<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {
             return None;
+        }
+
+        if !self.filter_range {
+            return self.inner.next();
         }
 
         for entry in self.inner.by_ref() {
@@ -374,6 +413,10 @@ impl ChunkCodec<f64> for GorillaF64Codec {
 
     fn entries<'a>(encoded: &'a Self::Encoded, start: u64, end: u64) -> Self::Entries<'a> {
         GorillaF64Entries::new(encoded, start, end)
+    }
+
+    fn entries_from_index<'a>(encoded: &'a Self::Encoded, start_index: usize) -> Self::Entries<'a> {
+        GorillaF64Entries::from_index(encoded, start_index)
     }
 }
 
@@ -518,6 +561,16 @@ fn significant_bits(value: u64, trailing: u32, width: u32) -> u64 {
 
 fn entry_iter_at_or_before(encoded: &GorillaF64EncodedChunk, timestamp: u64) -> EntryIter<'_> {
     EntryIter::from_anchor_slot(encoded, anchor_slot_at_or_before(encoded, timestamp))
+}
+
+fn entry_iter_from_index(encoded: &GorillaF64EncodedChunk, start_index: usize) -> EntryIter<'_> {
+    let slot = anchor_slot_at_or_before_index(&encoded.timestamp_anchors, start_index);
+    let anchor = timestamp_anchor(encoded, slot);
+    let mut iter = EntryIter::from_anchor_slot(encoded, slot);
+    for _ in anchor.index..start_index.min(encoded.len) {
+        let _ = iter.next();
+    }
+    iter
 }
 
 struct EntryIter<'a> {
@@ -809,6 +862,17 @@ fn anchor_slot_at_or_before(encoded: &GorillaF64EncodedChunk, timestamp: u64) ->
         .timestamp_anchors
         .binary_search_by_key(&timestamp, |anchor| anchor.timestamp)
     {
+        Ok(index) => Some(index),
+        Err(0) => None,
+        Err(index) => Some(index - 1),
+    }
+}
+
+fn anchor_slot_at_or_before_index(
+    anchors: &[TimestampAnchor],
+    target_index: usize,
+) -> Option<usize> {
+    match anchors.binary_search_by_key(&target_index, |anchor| anchor.index) {
         Ok(index) => Some(index),
         Err(0) => None,
         Err(index) => Some(index - 1),

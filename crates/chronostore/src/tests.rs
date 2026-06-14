@@ -351,6 +351,35 @@ fn returns_exact_entries_in_half_open_ranges() {
 }
 
 #[test]
+fn returns_recent_entries_in_chronological_order() {
+    let mut chronology = Chronology::<u64, NullSummary<u64>>::with_chunk_capacity(3);
+    let entries = (0..8)
+        .map(|value| Entry::new(value * 10, value))
+        .collect::<Vec<_>>();
+    chronology
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert_eq!(
+        chronology.recent_entries(5).collect::<Vec<_>>(),
+        vec![
+            Entry::new(30, 3),
+            Entry::new(40, 4),
+            Entry::new(50, 5),
+            Entry::new(60, 6),
+            Entry::new(70, 7),
+        ]
+    );
+    assert_eq!(chronology.recent_entries(0).collect::<Vec<_>>(), Vec::new());
+    assert_eq!(chronology.recent_entries(32).collect::<Vec<_>>(), entries);
+
+    let mut recent = chronology.recent_entries(5);
+    assert_eq!(recent.size_hint(), (5, Some(5)));
+    assert_eq!(recent.next(), Some(Entry::new(30, 3)));
+    assert_eq!(recent.size_hint(), (4, Some(4)));
+}
+
+#[test]
 fn retention_keeps_latest_sealed_chunks() {
     let mut chronology = Chronology::<u64, SimpleSummary<u64>>::with_chunk_capacity_and_retention(
         2,
@@ -398,6 +427,10 @@ fn retention_keeps_sealed_chunks_inside_time_window() {
             Entry::new(8, 8),
             Entry::new(9, 9),
         ]
+    );
+    assert_eq!(
+        chronology.recent_entries(3).collect::<Vec<_>>(),
+        vec![Entry::new(7, 7), Entry::new(8, 8), Entry::new(9, 9)]
     );
     assert_eq!(chronology.summary().min, Some(6));
     assert_eq!(chronology.summary().max, Some(9));
@@ -588,6 +621,27 @@ fn gorilla_f64_codec_matches_raw_queries_after_decoder_anchors() {
         raw.entries_in_range(start, end).collect::<Vec<_>>(),
         gorilla.entries_in_range(start, end).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn recent_entries_include_max_timestamp() {
+    let entries = [
+        Entry::new(0, 1.0),
+        Entry::new(16, 2.0),
+        Entry::new(u64::MAX, 3.0),
+    ];
+
+    let mut raw = Chronology::<f64, NullSummary<f64>>::with_chunk_capacity(2);
+    let mut gorilla = GorillaF64Chronology::<NullSummary<f64>>::with_chunk_capacity(2);
+
+    raw.insert_values(&entries)
+        .expect("timestamps are monotonic");
+    gorilla
+        .insert_values(&entries)
+        .expect("timestamps are monotonic");
+
+    assert_eq!(raw.recent_entries(2).collect::<Vec<_>>(), entries[1..]);
+    assert_eq!(gorilla.recent_entries(2).collect::<Vec<_>>(), entries[1..]);
 }
 
 #[test]

@@ -70,6 +70,7 @@ Current public pieces include:
 
 - exact entry range iterators for hover, inspection, export, and display
   algorithms that need raw samples
+- recent entry iterators for live sparklines and compact timeline views
 - bucketed range summary iterators for zoomed chart views
 - min/max envelope iterators for charts that must preserve spikes
 - pluggable summaries, including `SimpleSummary` and `StatsSummary`
@@ -85,8 +86,8 @@ cargo bench -p wind_tunnel
 ```
 
 It includes million-point insert, lookup, range-summary, bucketed-summary,
-envelope, LTTB, exact-range, retention, and raw-vs-Gorilla codec baselines for
-the chunked storage model.
+envelope, recent-tail, LTTB, exact-range, retention, and raw-vs-Gorilla codec
+baselines for the chunked storage model.
 
 ## Contribution
 
