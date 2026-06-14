@@ -45,7 +45,7 @@ pub struct StatsSummary<V> {
 
 impl<V: Default> Default for StatsSummary<V> {
     fn default() -> Self {
-        StatsSummary {
+        Self {
             min: None,
             max: None,
             sum: V::default(),

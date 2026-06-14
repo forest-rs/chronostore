@@ -276,8 +276,15 @@ impl ChunkCodec<f64> for GorillaF64Codec {
     type Entries<'a> = GorillaF64Entries<'a>;
 
     fn encode(timestamps: Vec<u64>, values: Vec<f64>) -> Self::Encoded {
-        debug_assert_eq!(timestamps.len(), values.len());
-        debug_assert!(!timestamps.is_empty());
+        debug_assert_eq!(
+            timestamps.len(),
+            values.len(),
+            "Gorilla encoding requires matching timestamp and value columns"
+        );
+        debug_assert!(
+            !timestamps.is_empty(),
+            "Gorilla encoding requires at least one sample"
+        );
 
         let first_timestamp = timestamps[0];
         let (first_delta, timestamp_deltas, timestamp_anchors) =
@@ -450,7 +457,11 @@ struct EntryIter<'a> {
 
 impl<'a> EntryIter<'a> {
     fn from_anchor_slot(encoded: &'a GorillaF64EncodedChunk, slot: Option<usize>) -> Self {
-        debug_assert_eq!(encoded.timestamp_anchors.len(), encoded.value_anchors.len());
+        debug_assert_eq!(
+            encoded.timestamp_anchors.len(),
+            encoded.value_anchors.len(),
+            "timestamp and value anchor streams must stay aligned"
+        );
 
         EntryIter {
             timestamps: TimestampIter::from_anchor(encoded, timestamp_anchor(encoded, slot)),
@@ -525,7 +536,7 @@ impl Iterator for TimestampIter<'_> {
                 let encoded_delta =
                     decode_var_u128(&self.encoded.timestamp_deltas, &mut self.offset)?;
                 let delta_of_delta = zigzag_decode(encoded_delta);
-                let delta = (i128::from(self.previous_delta) + delta_of_delta) as u64;
+                let delta = u64::try_from(i128::from(self.previous_delta) + delta_of_delta).ok()?;
                 self.previous_delta = delta;
                 self.previous_timestamp = self.previous_timestamp.checked_add(delta)?;
                 self.previous_timestamp
@@ -594,8 +605,9 @@ impl Iterator for ValueIter<'_> {
 
         if self.reader.read_bit()? {
             if self.reader.read_bit()? || !self.has_window {
-                self.leading = self.reader.read_bits(5)? as u32;
-                let width = match self.reader.read_bits(6)? as u32 {
+                self.leading = u32::try_from(self.reader.read_bits(5)?).ok()?;
+                let encoded_width = u32::try_from(self.reader.read_bits(6)?).ok()?;
+                let width = match encoded_width {
                     0 => 64,
                     width => width,
                 };
@@ -623,7 +635,7 @@ struct BitWriter {
 
 impl BitWriter {
     fn new() -> Self {
-        BitWriter {
+        Self {
             bytes: Vec::new(),
             current: 0,
             filled: 0,
@@ -688,10 +700,10 @@ impl<'a> BitReader<'a> {
 
 fn encode_var_u128(output: &mut Vec<u8>, mut value: u128) {
     while value >= 0x80 {
-        output.push(((value & 0x7f) as u8) | 0x80);
+        output.push(u8::try_from(value & 0x7f).expect("masked varint byte fits in u8") | 0x80);
         value >>= 7;
     }
-    output.push(value as u8);
+    output.push(u8::try_from(value).expect("final varint byte fits in u8"));
 }
 
 fn decode_var_u128(input: &[u8], offset: &mut usize) -> Option<u128> {

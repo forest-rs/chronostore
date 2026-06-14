@@ -18,7 +18,10 @@ use self::chunk::{ChunkEntries, ChunkRef, ClosedChunk, OpenChunk};
 use self::summary_node::SummaryNode;
 
 pub use self::chunk::ChunkSummary;
-pub use self::codec::{ChunkCodec, GorillaF64Codec, RawCodec};
+pub use self::codec::{
+    ChunkCodec, GorillaF64Codec, GorillaF64EncodedChunk, GorillaF64Entries, RawCodec,
+    RawEncodedChunk, RawEntries,
+};
 pub use self::range_summary::RangeSummary;
 pub use self::retention::RetentionPolicy;
 pub use self::summary_node::SUMMARY_FANOUT;
@@ -171,7 +174,7 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
         retention_policy: RetentionPolicy,
     ) -> Self {
         assert!(chunk_capacity > 0, "chunk capacity must be non-zero");
-        Chronology {
+        Self {
             sealed_chunks: Vec::new(),
             open_chunk: OpenChunk::with_capacity(chunk_capacity),
             summary_levels: Vec::new(),
@@ -783,7 +786,10 @@ where
 }
 
 fn bucket_boundary(start: u64, span: u64, bucket: usize, bucket_count: usize) -> u64 {
-    start + ((u128::from(span) * bucket as u128) / bucket_count as u128) as u64
+    let offset = (u128::from(span) * bucket as u128) / bucket_count as u128;
+    start
+        + u64::try_from(offset)
+            .expect("bucket boundary offset is bounded by the u64 timestamp span")
 }
 
 fn bucket_count(start: u64, end: u64, target_buckets: usize) -> usize {
@@ -793,7 +799,7 @@ fn bucket_count(start: u64, end: u64, target_buckets: usize) -> usize {
 
     let span = end - start;
     if span < target_buckets as u64 {
-        span as usize
+        usize::try_from(span).expect("span is smaller than target_buckets and fits in usize")
     } else {
         target_buckets
     }

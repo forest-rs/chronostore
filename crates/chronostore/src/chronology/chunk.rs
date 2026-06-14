@@ -80,7 +80,7 @@ impl<V: Copy> ExactSizeIterator for OpenEntries<'_, V> {}
 
 impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
     pub(super) fn with_capacity(capacity: usize) -> Self {
-        OpenChunk {
+        Self {
             timestamps: Vec::with_capacity(capacity),
             values: Vec::with_capacity(capacity),
             summary: S::default(),
@@ -105,7 +105,10 @@ impl<V: Copy, S: Summary<V>> OpenChunk<V, S> {
     where
         C: ChunkCodec<V>,
     {
-        debug_assert!(!self.timestamps.is_empty());
+        debug_assert!(
+            !self.timestamps.is_empty(),
+            "only non-empty open chunks can be sealed"
+        );
 
         let start = self.timestamps[0];
         let end = self.timestamps[self.timestamps.len() - 1];
@@ -353,8 +356,12 @@ where
     V: Copy,
     S: Summary<V>,
 {
-    debug_assert_eq!(timestamps.len(), values.len());
-    debug_assert!(tile_capacity > 0);
+    debug_assert_eq!(
+        timestamps.len(),
+        values.len(),
+        "summary tiles require matching timestamp and value columns"
+    );
+    debug_assert!(tile_capacity > 0, "summary tile capacity must be non-zero");
 
     let tile_capacity = tile_capacity.max(1);
     let tile_count = timestamps.len().div_ceil(tile_capacity);

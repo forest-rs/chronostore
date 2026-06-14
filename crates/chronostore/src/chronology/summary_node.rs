@@ -17,11 +17,14 @@ pub(super) struct SummaryNode<S> {
 }
 
 impl<S> SummaryNode<S> {
-    pub(super) fn merge_nodes<V>(nodes: &[SummaryNode<S>]) -> Self
+    pub(super) fn merge_nodes<V>(nodes: &[Self]) -> Self
     where
         S: Summary<V>,
     {
-        debug_assert!(!nodes.is_empty());
+        debug_assert!(
+            !nodes.is_empty(),
+            "summary merge requires at least one node"
+        );
 
         let mut summary = nodes[0].summary.clone();
         let mut len = nodes[0].len;
@@ -31,7 +34,7 @@ impl<S> SummaryNode<S> {
             summary.merge(&node.summary);
         }
 
-        SummaryNode {
+        Self {
             start: nodes[0].start,
             end: nodes[nodes.len() - 1].end,
             len,

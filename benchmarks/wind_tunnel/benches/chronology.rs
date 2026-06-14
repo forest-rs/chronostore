@@ -425,7 +425,8 @@ fn build_entries_range(start: usize, end: usize) -> Vec<Entry<f64>> {
     (start..end)
         .map(|index| {
             let timestamp = (index as u64).saturating_mul(16);
-            let value = f64::from((index % 257) as u32) * 0.25;
+            let value =
+                f64::from(u32::try_from(index % 257).expect("modulo 257 fits in u32")) * 0.25;
             Entry::new(timestamp, value)
         })
         .collect()

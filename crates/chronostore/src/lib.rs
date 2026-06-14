@@ -113,7 +113,8 @@ mod tests;
 
 pub use self::chronology::{
     Chronology, ChunkCodec, ChunkSummary, DEFAULT_CHUNK_CAPACITY, GorillaF64Chronology,
-    GorillaF64Codec, InsertError, RangeSummary, RawCodec, RetentionPolicy, SUMMARY_FANOUT,
+    GorillaF64Codec, GorillaF64EncodedChunk, GorillaF64Entries, InsertError, RangeSummary,
+    RawCodec, RawEncodedChunk, RawEntries, RetentionPolicy, SUMMARY_FANOUT,
 };
 pub use self::entry::Entry;
 pub use self::envelope::{EnvelopeBucket, EnvelopeSummary};

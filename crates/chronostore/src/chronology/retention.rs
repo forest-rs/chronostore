@@ -24,7 +24,7 @@ pub struct RetentionPolicy {
 impl RetentionPolicy {
     /// Keep all sealed chunks.
     pub const fn unbounded() -> Self {
-        RetentionPolicy {
+        Self {
             max_sealed_chunks: None,
             max_age: None,
         }
@@ -32,7 +32,7 @@ impl RetentionPolicy {
 
     /// Keep at most `max_sealed_chunks` sealed chunks.
     pub const fn max_sealed_chunks(max_sealed_chunks: usize) -> Self {
-        RetentionPolicy {
+        Self {
             max_sealed_chunks: Some(max_sealed_chunks),
             max_age: None,
         }
@@ -45,7 +45,7 @@ impl RetentionPolicy {
     /// Chunks are retained when their end timestamp is greater than or equal to
     /// `latest_timestamp - max_age`.
     pub const fn max_age(max_age: u64) -> Self {
-        RetentionPolicy {
+        Self {
             max_sealed_chunks: None,
             max_age: Some(max_age),
         }
@@ -53,7 +53,7 @@ impl RetentionPolicy {
 
     /// Return this policy with a sealed-chunk limit.
     pub const fn with_max_sealed_chunks(self, max_sealed_chunks: usize) -> Self {
-        RetentionPolicy {
+        Self {
             max_sealed_chunks: Some(max_sealed_chunks),
             max_age: self.max_age,
         }
@@ -63,7 +63,7 @@ impl RetentionPolicy {
     ///
     /// `max_age` is measured in the same timestamp units as inserted entries.
     pub const fn with_max_age(self, max_age: u64) -> Self {
-        RetentionPolicy {
+        Self {
             max_sealed_chunks: self.max_sealed_chunks,
             max_age: Some(max_age),
         }

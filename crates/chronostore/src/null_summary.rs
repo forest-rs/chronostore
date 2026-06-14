@@ -27,7 +27,7 @@ impl<V> Copy for NullSummary<V> {}
 
 impl<V> Default for NullSummary<V> {
     fn default() -> Self {
-        NullSummary {
+        Self {
             phantom: PhantomData,
         }
     }

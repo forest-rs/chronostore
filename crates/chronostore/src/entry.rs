@@ -36,6 +36,6 @@ pub struct Entry<V> {
 impl<V> Entry<V> {
     /// Create a new timestamped sample.
     pub fn new(timestamp: u64, value: V) -> Self {
-        Entry { timestamp, value }
+        Self { timestamp, value }
     }
 }

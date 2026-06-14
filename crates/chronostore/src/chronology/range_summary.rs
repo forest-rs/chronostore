@@ -30,7 +30,7 @@ impl<S> RangeSummary<S> {
     where
         S: Default,
     {
-        RangeSummary {
+        Self {
             start,
             end,
             len: 0,

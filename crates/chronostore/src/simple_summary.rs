@@ -21,7 +21,7 @@ pub struct SimpleSummary<V: Copy + PartialOrd> {
 
 impl<V: Copy + PartialOrd> Default for SimpleSummary<V> {
     fn default() -> Self {
-        SimpleSummary {
+        Self {
             min: None,
             max: None,
         }

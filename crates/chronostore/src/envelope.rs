@@ -58,7 +58,7 @@ impl<V: Copy> EnvelopeBucket<V> {
     where
         S: EnvelopeSummary<V>,
     {
-        EnvelopeBucket {
+        Self {
             start: range_summary.start,
             end: range_summary.end,
             len: range_summary.len,
