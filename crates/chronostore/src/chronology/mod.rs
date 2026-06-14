@@ -128,6 +128,19 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Default for Chronology<V, S, C> {
     }
 }
 
+impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> core::fmt::Debug for Chronology<V, S, C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Chronology")
+            .field("len", &self.len)
+            .field("chunk_capacity", &self.chunk_capacity)
+            .field("sealed_chunk_count", &self.sealed_chunks.len())
+            .field("chunk_count", &self.chunk_count())
+            .field("summary_level_count", &self.summary_levels.len())
+            .field("retention_policy", &self.retention_policy)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     /// Create a new [`Chronology`] with [`DEFAULT_CHUNK_CAPACITY`].
     pub fn new() -> Self {
@@ -394,13 +407,13 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
 
     /// Record a single value and its timestamp.
     pub fn insert_value(&mut self, entry: Entry<V>) -> Result<(), InsertError> {
-        if let Some(previous) = self.last_timestamp() {
-            if entry.timestamp <= previous {
-                return Err(InsertError::NonMonotonicTimestamp {
-                    previous,
-                    next: entry.timestamp,
-                });
-            }
+        if let Some(previous) = self.last_timestamp()
+            && entry.timestamp <= previous
+        {
+            return Err(InsertError::NonMonotonicTimestamp {
+                previous,
+                next: entry.timestamp,
+            });
         }
 
         self.push_entry(entry);
@@ -426,13 +439,13 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
         let mut previous = self.last_timestamp();
 
         for entry in values {
-            if let Some(previous_timestamp) = previous {
-                if entry.timestamp <= previous_timestamp {
-                    return Err(InsertError::NonMonotonicTimestamp {
-                        previous: previous_timestamp,
-                        next: entry.timestamp,
-                    });
-                }
+            if let Some(previous_timestamp) = previous
+                && entry.timestamp <= previous_timestamp
+            {
+                return Err(InsertError::NonMonotonicTimestamp {
+                    previous: previous_timestamp,
+                    next: entry.timestamp,
+                });
             }
             previous = Some(entry.timestamp);
         }
@@ -560,14 +573,14 @@ impl<V: Copy, S: Summary<V>, C: ChunkCodec<V>> Chronology<V, S, C> {
     fn retention_eviction_count(&self) -> usize {
         let mut evict_count = 0;
 
-        if let Some(max_age) = self.retention_policy.age_limit() {
-            if let Some(latest_timestamp) = self.last_timestamp() {
-                let cutoff = latest_timestamp.saturating_sub(max_age);
-                while evict_count < self.sealed_chunks.len()
-                    && self.sealed_chunks[evict_count].end_timestamp() < cutoff
-                {
-                    evict_count += 1;
-                }
+        if let Some(max_age) = self.retention_policy.age_limit()
+            && let Some(latest_timestamp) = self.last_timestamp()
+        {
+            let cutoff = latest_timestamp.saturating_sub(max_age);
+            while evict_count < self.sealed_chunks.len()
+                && self.sealed_chunks[evict_count].end_timestamp() < cutoff
+            {
+                evict_count += 1;
             }
         }
 

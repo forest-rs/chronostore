@@ -7,10 +7,10 @@
 //! Baseline chronology storage benchmarks.
 
 use chronostore::{
-    lttb, Chronology, ChunkCodec, Direction, Entry, GorillaF64Codec, NullSummary, RawCodec,
-    RetentionPolicy, SimpleSummary, Summary,
+    Chronology, ChunkCodec, Direction, Entry, GorillaF64Codec, NullSummary, RawCodec,
+    RetentionPolicy, SimpleSummary, Summary, lttb,
 };
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 const CHUNK_CAPACITY: usize = 4_096;

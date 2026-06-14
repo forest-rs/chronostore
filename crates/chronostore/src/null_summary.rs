@@ -12,6 +12,7 @@ use core::marker::PhantomData;
 /// Use `NullSummary<V>` as the summary parameter for a
 /// [`Chronology`](crate::Chronology) when exact samples are needed but
 /// aggregate range summaries are not.
+#[derive(Debug)]
 pub struct NullSummary<V> {
     phantom: PhantomData<V>,
 }

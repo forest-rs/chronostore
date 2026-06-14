@@ -13,7 +13,7 @@ use crate::Summary;
 /// iterator from [`Chronology::bucketed_summaries`](crate::Chronology::bucketed_summaries).
 /// The `summary` field is the caller-selected [`Summary`] implementation for
 /// the entries whose timestamps fall inside `start..end`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RangeSummary<S> {
     /// Inclusive start of the summarized timestamp range.
     pub start: u64,

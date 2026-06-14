@@ -97,14 +97,6 @@
 //! ```
 
 #![no_std]
-#![warn(clippy::doc_markdown, missing_docs)]
-#![deny(
-    trivial_numeric_casts,
-    unsafe_code,
-    unstable_features,
-    unused_import_braces,
-    unused_qualifications
-)]
 
 extern crate alloc;
 
@@ -120,8 +112,8 @@ mod summary;
 mod tests;
 
 pub use self::chronology::{
-    Chronology, ChunkCodec, ChunkSummary, GorillaF64Chronology, GorillaF64Codec, InsertError,
-    RangeSummary, RawCodec, RetentionPolicy, DEFAULT_CHUNK_CAPACITY, SUMMARY_FANOUT,
+    Chronology, ChunkCodec, ChunkSummary, DEFAULT_CHUNK_CAPACITY, GorillaF64Chronology,
+    GorillaF64Codec, InsertError, RangeSummary, RawCodec, RetentionPolicy, SUMMARY_FANOUT,
 };
 pub use self::entry::Entry;
 pub use self::envelope::{EnvelopeBucket, EnvelopeSummary};

@@ -1,0 +1,18 @@
+[package]
+name = "chronostore"
+version = "0.0.1"
+authors = ["Bruce Mitchener <bruce.mitchener@gmail.com>"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+description = "A system for storing time series data in memory."
+keywords = ["time series", "timeseries", "series"]
+documentation = "https://endoli.github.io/chronostore.rs/"
+homepage = "https://github.com/endoli/chronostore.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

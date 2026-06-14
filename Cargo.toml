@@ -1,21 +1,24 @@
-[package]
-name = "chronostore"
-version = "0.0.1"
-authors = ["Bruce Mitchener <bruce.mitchener@gmail.com>"]
-license = "MIT OR Apache-2.0"
-readme = "README.md"
-description = "A system for storing time series data in memory."
-keywords = ["time series", "timeseries", "series"]
-documentation = "https://endoli.github.io/chronostore.rs/"
-homepage = "https://github.com/endoli/chronostore.rs"
-repository = "https://github.com/endoli/chronostore.rs"
-edition = "2021"
-
 [workspace]
 resolver = "2"
 members = [
-    ".",
     "benchmarks/wind_tunnel",
+    "crates/chronostore",
 ]
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/endoli/chronostore.rs"
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+allow_attributes = "warn"
+doc_markdown = "warn"
+
+[workspace.dependencies]
+chronostore = { path = "crates/chronostore" }

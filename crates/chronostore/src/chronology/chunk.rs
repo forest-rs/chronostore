@@ -17,7 +17,7 @@ use core::ops::Range;
 /// for diagnostics and storage inspection. It borrows the chunk's summary from
 /// the chronology, so it is a view into existing storage rather than an owned
 /// aggregate.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ChunkSummary<'a, S> {
     /// Start timestamp for the chunk.
     pub start: u64,

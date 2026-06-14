@@ -88,12 +88,14 @@ pub struct RawCodec;
 /// [`ChunkCodec::Encoded`] representation. Callers normally interact with it
 /// through [`Chronology`](crate::Chronology) query methods rather than naming
 /// this type directly.
+#[derive(Debug)]
 pub struct RawEncodedChunk<V: Copy> {
     timestamps: Vec<u64>,
     values: Vec<V>,
 }
 
 /// Iterator over exact entries stored by [`RawCodec`].
+#[derive(Debug)]
 pub struct RawEntries<'a, V: Copy> {
     timestamps: &'a [u64],
     values: &'a [V],
@@ -202,6 +204,7 @@ pub struct GorillaF64Codec;
 /// chunks. Callers usually observe its effects through
 /// [`Chronology::sealed_encoded_size`](crate::Chronology::sealed_encoded_size)
 /// and query methods rather than constructing it directly.
+#[derive(Debug)]
 pub struct GorillaF64EncodedChunk {
     len: usize,
     first_timestamp: u64,
@@ -219,6 +222,16 @@ pub struct GorillaF64Entries<'a> {
     start: u64,
     end: u64,
     done: bool,
+}
+
+impl core::fmt::Debug for GorillaF64Entries<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GorillaF64Entries")
+            .field("start", &self.start)
+            .field("end", &self.end)
+            .field("done", &self.done)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> GorillaF64Entries<'a> {
@@ -454,7 +467,7 @@ impl Iterator for EntryIter<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct TimestampAnchor {
     index: usize,
     timestamp: u64,
@@ -524,7 +537,7 @@ impl Iterator for TimestampIter<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct ValueAnchor {
     index: usize,
     value_bits: u64,
